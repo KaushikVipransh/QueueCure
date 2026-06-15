@@ -12,8 +12,10 @@ export interface PatientWithPrediction {
   id: string;
   tokenNumber: number;
   patientName: string;
+  phoneNumber: string | null;
   appointmentType: string;
   status: string;
+  smsSent: boolean;
   createdAt: string;
   estimatedWaitMinutes: number;
   predictedDuration: number;

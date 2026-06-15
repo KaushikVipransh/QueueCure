@@ -44,12 +44,7 @@ export class SmsService {
     const trackingUrl = `${FRONTEND_URL}/track/${opts.tokenNumber}`;
     const firstName = opts.patientName.split(' ')[0];
 
-    const body =
-      `Hi ${firstName}! 👋\n` +
-      `Your token at ${opts.clinicName} is #${opts.tokenNumber}.\n` +
-      `Track your wait time live:\n` +
-      `${trackingUrl}\n\n` +
-      `You'll see your position and estimated wait — no app needed.`;
+    const body = `Your ${opts.clinicName} token is #${opts.tokenNumber}. Track your wait live: ${trackingUrl}`;
 
     try {
       const msg = await getClient()!.messages.create({

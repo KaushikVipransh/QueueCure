@@ -6,7 +6,7 @@ import { QueueState, PatientWithPrediction, QueueStats } from '../types';
 import { createError } from '../middleware/errorHandler';
 
 const SETTINGS_ID = '00000000-0000-0000-0000-000000000001';
-const TOKEN_START  = 100;
+const TOKEN_START = 100;
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -70,17 +70,17 @@ export class QueueService {
 
         return tx.patient.create({
           data: {
-            tokenNumber:  nextToken,
-            patientName:  patientName.trim(),
-            phoneNumber:  phoneNumber?.trim() || null,
+            tokenNumber: nextToken,
+            patientName: patientName.trim(),
+            phoneNumber: phoneNumber?.trim() || null,
             appointmentType,
             status: 'waiting',
             consultation: {
               create: {
                 appointmentType,
                 predictedDuration,
-                sessionId:                   getSessionId(),
-                registeredAt:                new Date(),
+                sessionId: getSessionId(),
+                registeredAt: new Date(),
                 predictedWaitAtRegistration: registrationEstimate.likely,
               },
             },
@@ -95,7 +95,7 @@ export class QueueService {
         const clinicName = settings?.clinicName ?? 'Queue Cure Clinic';
 
         smsService.sendTrackingLink({
-          to:          patient.phoneNumber,
+          to: patient.phoneNumber,
           patientName: patient.patientName,
           tokenNumber: patient.tokenNumber,
           clinicName,
@@ -104,10 +104,10 @@ export class QueueService {
             // Mark smsSent so we have an audit trail
             await prisma.patient.update({
               where: { id: patient.id },
-              data:  { smsSent: true },
-            }).catch(() => {}); // best-effort
+              data: { smsSent: true },
+            }).catch(() => { }); // best-effort
           }
-        }).catch(() => {}); // never let SMS errors surface
+        }).catch(() => { }); // never let SMS errors surface
       }
 
       return patient;
@@ -152,8 +152,8 @@ export class QueueService {
         where: { status: 'waiting' },
       });
 
-      const now      = new Date();
-      const hour     = now.getHours();
+      const now = new Date();
+      const hour = now.getHours();
       const calledAt = now;
 
       const updated = await tx.patient.update({
@@ -170,11 +170,11 @@ export class QueueService {
         await tx.consultation.update({
           where: { id: updated.consultation.id },
           data: {
-            startTime:      calledAt,   // startTime ≈ calledAt (no separate entry room tracking yet)
+            startTime: calledAt,   // startTime ≈ calledAt (no separate entry room tracking yet)
             calledAt,
             queueDepthAtCall,
-            timeOfDay:      getTimeOfDay(hour),
-            dayOfWeek:      now.getDay(),
+            timeOfDay: getTimeOfDay(hour),
+            dayOfWeek: now.getDay(),
             actualWaitMinutes,
             transitionGapMinutes: 0,    // updated on completeConsultation when endTime known
           },
@@ -182,12 +182,12 @@ export class QueueService {
       }
 
       await tx.queueSettings.upsert({
-        where:  { id: SETTINGS_ID },
+        where: { id: SETTINGS_ID },
         update: { currentToken: nextPatient.tokenNumber },
         create: {
-          id:           SETTINGS_ID,
+          id: SETTINGS_ID,
           currentToken: nextPatient.tokenNumber,
-          clinicName:   'Queue Cure Clinic',
+          clinicName: 'Queue Cure Clinic',
         },
       });
 
@@ -210,9 +210,9 @@ export class QueueService {
     }
 
     const endTime = new Date();
-    let actualDuration:         number | null = null;
-    let transitionGapMinutes:   number        = 0;
-    let predictionError:        number | null = null;
+    let actualDuration: number | null = null;
+    let transitionGapMinutes: number = 0;
+    let predictionError: number | null = null;
 
     if (currentPatient.consultation?.startTime) {
       actualDuration =
@@ -242,7 +242,7 @@ export class QueueService {
     const updated = await prisma.$transaction(async (tx) => {
       const patient = await tx.patient.update({
         where: { id: currentPatient.id },
-        data:  { status: 'completed' },
+        data: { status: 'completed' },
         include: { consultation: true },
       });
 
@@ -292,7 +292,7 @@ export class QueueService {
 
     return prisma.patient.update({
       where: { id: patientId },
-      data:  { status: 'cancelled' },
+      data: { status: 'cancelled' },
     });
   }
 
@@ -308,7 +308,7 @@ export class QueueService {
         include: { consultation: true },
       }),
       prisma.patient.findMany({
-        where:   { status: 'waiting' },
+        where: { status: 'waiting' },
         orderBy: { tokenNumber: 'asc' },
         include: { consultation: true },
       }),
@@ -321,7 +321,7 @@ export class QueueService {
     );
 
     // Current consultation progress
-    let currentElapsed   = 0;
+    let currentElapsed = 0;
     let currentPredicted = 0;
     if (currentPatient?.consultation?.startTime) {
       currentElapsed =
@@ -330,52 +330,56 @@ export class QueueService {
     }
 
     const stats: QueueStats = {
-      currentToken:                   settings?.currentToken ?? null,
-      totalWaiting:                   waitingPatients.length,
-      avgConsultationDuration:        todayStats.avgDuration,
-      patientsServedToday:            todayStats.servedToday,
-      queueEfficiency:                todayStats.efficiency,
-      currentConsultationElapsed:     Math.round(currentElapsed * 10) / 10,
-      currentConsultationPredicted:   currentPredicted,
+      currentToken: settings?.currentToken ?? null,
+      totalWaiting: waitingPatients.length,
+      avgConsultationDuration: todayStats.avgDuration,
+      patientsServedToday: todayStats.servedToday,
+      queueEfficiency: todayStats.efficiency,
+      currentConsultationElapsed: Math.round(currentElapsed * 10) / 10,
+      currentConsultationPredicted: currentPredicted,
     };
 
     const formatPatient = (
       p: typeof waitingPatients[0],
       waitMinutes: number,
     ): PatientWithPrediction => ({
-      id:                   p.id,
-      tokenNumber:          p.tokenNumber,
-      patientName:          p.patientName,
-      appointmentType:      p.appointmentType,
-      status:               p.status,
-      createdAt:            p.createdAt.toISOString(),
+      id: p.id,
+      tokenNumber: p.tokenNumber,
+      patientName: p.patientName,
+      phoneNumber: p.phoneNumber,
+      appointmentType: p.appointmentType,
+      status: p.status,
+      smsSent: p.smsSent,
+      createdAt: p.createdAt.toISOString(),
       estimatedWaitMinutes: waitMinutes,
-      predictedDuration:    p.consultation?.predictedDuration ?? 0,
-      estimationResult:     estimationMap[p.id] ?? null,
+      predictedDuration: p.consultation?.predictedDuration ?? 0,
+      estimationResult: estimationMap[p.id] ?? null,
     });
 
     let currentPatientFormatted: PatientWithPrediction | null = null;
     if (currentPatient) {
       const remaining = Math.max(0, currentPredicted - currentElapsed);
       currentPatientFormatted = {
-        id:                   currentPatient.id,
-        tokenNumber:          currentPatient.tokenNumber,
-        patientName:          currentPatient.patientName,
-        appointmentType:      currentPatient.appointmentType,
-        status:               currentPatient.status,
-        createdAt:            currentPatient.createdAt.toISOString(),
+        id: currentPatient.id,
+        tokenNumber: currentPatient.tokenNumber,
+        patientName: currentPatient.patientName,
+        phoneNumber: currentPatient.phoneNumber,
+        appointmentType: currentPatient.appointmentType,
+        status: currentPatient.status,
+        smsSent: currentPatient.smsSent,
+        createdAt: currentPatient.createdAt.toISOString(),
         estimatedWaitMinutes: Math.max(0, Math.ceil(remaining)),
-        predictedDuration:    currentPredicted,
-        estimationResult:     null,
+        predictedDuration: currentPredicted,
+        estimationResult: null,
       };
     }
 
     return {
-      currentPatient:  currentPatientFormatted,
+      currentPatient: currentPatientFormatted,
       waitingPatients: waitingPatients.map((p) => formatPatient(p, waitMap[p.id] ?? 0)),
       stats,
-      clinicName:  settings?.clinicName ?? 'Queue Cure Clinic',
-      updatedAt:   new Date().toISOString(),
+      clinicName: settings?.clinicName ?? 'Queue Cure Clinic',
+      updatedAt: new Date().toISOString(),
     };
   }
 
@@ -384,7 +388,7 @@ export class QueueService {
    */
   async getPatientByToken(tokenNumber: number) {
     return prisma.patient.findUnique({
-      where:   { tokenNumber },
+      where: { tokenNumber },
       include: { consultation: true },
     });
   }
@@ -394,7 +398,7 @@ export class QueueService {
    */
   async getAllPatients(status?: PatientStatus) {
     return prisma.patient.findMany({
-      where:   status ? { status } : undefined,
+      where: status ? { status } : undefined,
       orderBy: { tokenNumber: 'asc' },
       include: { consultation: true },
     });
@@ -421,7 +425,7 @@ export class QueueService {
     const avgDuration =
       completedConsultations.length > 0
         ? completedConsultations.reduce((sum, c) => sum + (c.actualDuration ?? 0), 0) /
-          completedConsultations.length
+        completedConsultations.length
         : 0;
 
     const efficiency =
