@@ -1,0 +1,71 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+enum AppointmentType {
+  follow_up
+  general
+  new_patient
+  specialist
+}
+
+enum PatientStatus {
+  waiting
+  in_consultation
+  completed
+  cancelled
+}
+
+model Patient {
+  id              String          @id @default(uuid())
+  tokenNumber     Int             @unique @map("token_number")
+  patientName     String          @map("patient_name")
+  appointmentType AppointmentType @map("appointment_type")
+  status          PatientStatus   @default(waiting)
+  createdAt       DateTime        @default(now()) @map("created_at")
+  updatedAt       DateTime        @updatedAt @map("updated_at")
+  consultation    Consultation?
+
+  @@map("patients")
+}
+
+model Consultation {
+  id                String          @id @default(uuid())
+  patientId         String          @unique @map("patient_id")
+  appointmentType   AppointmentType @map("appointment_type")
+  startTime         DateTime?       @map("start_time")
+  endTime           DateTime?       @map("end_time")
+  actualDuration    Float?          @map("actual_duration")
+  predictedDuration Float           @map("predicted_duration")
+  createdAt         DateTime        @default(now()) @map("created_at")
+  patient           Patient         @relation(fields: [patientId], references: [id], onDelete: Cascade)
+
+  @@map("consultations")
+}
+
+model QueueSettings {
+  id           String   @id @default(uuid())
+  currentToken Int?     @map("current_token")
+  clinicName   String   @default("Queue Cure Clinic") @map("clinic_name")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  @@map("queue_settings")
+}
+
+model PredictionMetrics {
+  id                String          @id @default(uuid())
+  appointmentType   AppointmentType @unique @map("appointment_type")
+  historicalAverage Float           @default(0) @map("historical_average")
+  recentAverage     Float           @default(0) @map("recent_average")
+  sampleCount       Int             @default(0) @map("sample_count")
+  updatedAt         DateTime        @updatedAt @map("updated_at")
+
+  @@map("prediction_metrics")
+}
