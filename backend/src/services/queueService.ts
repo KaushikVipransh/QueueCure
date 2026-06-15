@@ -5,24 +5,59 @@ import { QueueState, PatientWithPrediction, QueueStats } from '../types';
 import { createError } from '../middleware/errorHandler';
 
 const SETTINGS_ID = '00000000-0000-0000-0000-000000000001';
+const TOKEN_START  = 100;
 
-// Starting token number
-const TOKEN_START = 100;
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+/** Returns "morning" | "afternoon" | "evening" for a given hour */
+function getTimeOfDay(hour: number): string {
+  if (hour < 12) return 'morning';
+  if (hour < 17) return 'afternoon';
+  return 'evening';
+}
+
+/**
+ * Session ID groups all registrations on the same calendar day.
+ * Format: "YYYY-MM-DD" (clinic-scoped once doctorId is added in v2)
+ */
+function getSessionId(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
+// ─── QueueService ─────────────────────────────────────────────────────────────
 
 export class QueueService {
   /**
    * Add a new patient to the queue.
-   * Uses a transaction to ensure atomic token number generation.
+   * Records registeredAt + predictedWaitAtRegistration for audit trail.
    */
-  async addPatient(
-    patientName: string,
-    appointmentType: AppointmentType,
-  ) {
+  async addPatient(patientName: string, appointmentType: AppointmentType) {
     const predictedDuration = await predictionService.getPredictedDuration(appointmentType);
+
+    // Estimate wait at registration time so we can compute prediction error later
+    const waitingPatientsNow = await prisma.patient.findMany({
+      where: { status: 'waiting' },
+      orderBy: { tokenNumber: 'asc' },
+    });
+    const queueAheadTypes = waitingPatientsNow.map((p) => p.appointmentType);
+
+    const currentPatientNow = await prisma.patient.findFirst({
+      where: { status: 'in_consultation' },
+      include: { consultation: true },
+    });
+
+    const registrationEstimate = await predictionService.getEstimationResult(
+      appointmentType,
+      waitingPatientsNow.length,
+      queueAheadTypes,
+      currentPatientNow?.appointmentType ?? null,
+      currentPatientNow?.consultation?.startTime
+        ? new Date(currentPatientNow.consultation.startTime)
+        : null,
+    );
 
     try {
       const patient = await prisma.$transaction(async (tx) => {
-        // Atomic: get max token inside transaction to prevent duplicates
         const aggregate = await tx.patient.aggregate({
           _max: { tokenNumber: true },
         });
@@ -30,14 +65,17 @@ export class QueueService {
 
         return tx.patient.create({
           data: {
-            tokenNumber: nextToken,
-            patientName: patientName.trim(),
+            tokenNumber:  nextToken,
+            patientName:  patientName.trim(),
             appointmentType,
             status: 'waiting',
             consultation: {
               create: {
                 appointmentType,
                 predictedDuration,
+                sessionId:                  getSessionId(),
+                registeredAt:               new Date(),
+                predictedWaitAtRegistration: registrationEstimate.likely,
               },
             },
           },
@@ -47,7 +85,6 @@ export class QueueService {
 
       return patient;
     } catch (err: any) {
-      // Unique constraint on tokenNumber — retry once
       if (err.code === 'P2002') {
         throw createError('Token conflict — please try again.', 409);
       }
@@ -57,12 +94,12 @@ export class QueueService {
 
   /**
    * Call the next waiting patient.
-   * CONCURRENCY-SAFE: Uses a transaction to prevent two receptionists
-   * from calling next simultaneously.
+   * Records calledAt + queue context snapshot for the ConsultationRecord.
+   * CONCURRENCY-SAFE: uses a transaction.
    */
   async callNext() {
     return prisma.$transaction(async (tx) => {
-      // Guard: ensure no one is currently in consultation
+      // Guard: no double-calling
       const currentlyServing = await tx.patient.findFirst({
         where: { status: 'in_consultation' },
       });
@@ -74,7 +111,6 @@ export class QueueService {
         );
       }
 
-      // Find the next waiting patient (lowest token number)
       const nextPatient = await tx.patient.findFirst({
         where: { status: 'waiting' },
         orderBy: { tokenNumber: 'asc' },
@@ -84,29 +120,47 @@ export class QueueService {
         throw createError('Queue is empty. No patients waiting.', 404);
       }
 
-      // Update patient status to in_consultation
+      // Count waiting patients at call time (for queue context snapshot)
+      const queueDepthAtCall = await tx.patient.count({
+        where: { status: 'waiting' },
+      });
+
+      const now      = new Date();
+      const hour     = now.getHours();
+      const calledAt = now;
+
       const updated = await tx.patient.update({
         where: { id: nextPatient.id },
         data: { status: 'in_consultation' },
         include: { consultation: true },
       });
 
-      // Record consultation start time
       if (updated.consultation) {
+        const registeredAt = updated.consultation.registeredAt ?? updated.consultation.createdAt;
+        const actualWaitMinutes =
+          (calledAt.getTime() - new Date(registeredAt).getTime()) / 60000;
+
         await tx.consultation.update({
           where: { id: updated.consultation.id },
-          data: { startTime: new Date() },
+          data: {
+            startTime:      calledAt,   // startTime ≈ calledAt (no separate entry room tracking yet)
+            calledAt,
+            queueDepthAtCall,
+            timeOfDay:      getTimeOfDay(hour),
+            dayOfWeek:      now.getDay(),
+            actualWaitMinutes,
+            transitionGapMinutes: 0,    // updated on completeConsultation when endTime known
+          },
         });
       }
 
-      // Update the queue settings current token
       await tx.queueSettings.upsert({
-        where: { id: SETTINGS_ID },
+        where:  { id: SETTINGS_ID },
         update: { currentToken: nextPatient.tokenNumber },
         create: {
-          id: SETTINGS_ID,
+          id:           SETTINGS_ID,
           currentToken: nextPatient.tokenNumber,
-          clinicName: 'Queue Cure Clinic',
+          clinicName:   'Queue Cure Clinic',
         },
       });
 
@@ -116,7 +170,7 @@ export class QueueService {
 
   /**
    * Mark current consultation as complete.
-   * Updates prediction metrics with actual duration.
+   * Finalises all ConsultationRecord fields and feeds data into PredictionMetrics.
    */
   async completeConsultation() {
     const currentPatient = await prisma.patient.findFirst({
@@ -129,19 +183,39 @@ export class QueueService {
     }
 
     const endTime = new Date();
-    let actualDuration: number | null = null;
+    let actualDuration:         number | null = null;
+    let transitionGapMinutes:   number        = 0;
+    let predictionError:        number | null = null;
 
     if (currentPatient.consultation?.startTime) {
       actualDuration =
-        (endTime.getTime() - new Date(currentPatient.consultation.startTime).getTime()) /
-        60000;
+        (endTime.getTime() - new Date(currentPatient.consultation.startTime).getTime()) / 60000;
     }
 
-    // Update patient and consultation atomically
+    if (
+      currentPatient.consultation?.calledAt &&
+      currentPatient.consultation?.startTime
+    ) {
+      transitionGapMinutes =
+        (new Date(currentPatient.consultation.startTime).getTime() -
+          new Date(currentPatient.consultation.calledAt).getTime()) / 60000;
+    }
+
+    if (
+      actualDuration !== null &&
+      currentPatient.consultation?.actualWaitMinutes != null &&
+      currentPatient.consultation?.predictedWaitAtRegistration != null
+    ) {
+      // Prediction error = how far off we were vs what we told the patient
+      predictionError =
+        currentPatient.consultation.actualWaitMinutes -
+        currentPatient.consultation.predictedWaitAtRegistration;
+    }
+
     const updated = await prisma.$transaction(async (tx) => {
       const patient = await tx.patient.update({
         where: { id: currentPatient.id },
-        data: { status: 'completed' },
+        data:  { status: 'completed' },
         include: { consultation: true },
       });
 
@@ -151,11 +225,12 @@ export class QueueService {
           data: {
             endTime,
             actualDuration,
+            transitionGapMinutes,
+            predictionError,
           },
         });
       }
 
-      // Clear current token from settings
       await tx.queueSettings.updateMany({
         data: { currentToken: null },
       });
@@ -163,7 +238,7 @@ export class QueueService {
       return patient;
     });
 
-    // Update prediction metrics outside the transaction (non-critical)
+    // Update prediction metrics (non-critical, outside transaction)
     if (actualDuration !== null) {
       await predictionService.updateMetrics(currentPatient.appointmentType, actualDuration);
     }
@@ -190,12 +265,13 @@ export class QueueService {
 
     return prisma.patient.update({
       where: { id: patientId },
-      data: { status: 'cancelled' },
+      data:  { status: 'cancelled' },
     });
   }
 
   /**
    * Get comprehensive queue state for broadcasting to all clients.
+   * Now includes EstimationResult (range + confidence) per waiting patient.
    */
   async getQueueState(): Promise<QueueState> {
     const [settings, currentPatient, waitingPatients, todayStats] = await Promise.all([
@@ -205,20 +281,20 @@ export class QueueService {
         include: { consultation: true },
       }),
       prisma.patient.findMany({
-        where: { status: 'waiting' },
+        where:   { status: 'waiting' },
         orderBy: { tokenNumber: 'asc' },
         include: { consultation: true },
       }),
       this.getTodayStats(),
     ]);
 
-    // Calculate wait times for all waiting patients
-    const waitTimeMap = await predictionService.calculateAllWaitTimes(
+    // Compute per-patient wait time AND full estimation result in one pass
+    const { waitMap, estimationMap } = await predictionService.calculateAllWaitTimes(
       waitingPatients.map((p) => ({ id: p.id, appointmentType: p.appointmentType })),
     );
 
     // Current consultation progress
-    let currentElapsed = 0;
+    let currentElapsed   = 0;
     let currentPredicted = 0;
     if (currentPatient?.consultation?.startTime) {
       currentElapsed =
@@ -227,52 +303,52 @@ export class QueueService {
     }
 
     const stats: QueueStats = {
-      currentToken: settings?.currentToken ?? null,
-      totalWaiting: waitingPatients.length,
-      avgConsultationDuration: todayStats.avgDuration,
-      patientsServedToday: todayStats.servedToday,
-      queueEfficiency: todayStats.efficiency,
-      currentConsultationElapsed: Math.round(currentElapsed * 10) / 10,
-      currentConsultationPredicted: currentPredicted,
+      currentToken:                   settings?.currentToken ?? null,
+      totalWaiting:                   waitingPatients.length,
+      avgConsultationDuration:        todayStats.avgDuration,
+      patientsServedToday:            todayStats.servedToday,
+      queueEfficiency:                todayStats.efficiency,
+      currentConsultationElapsed:     Math.round(currentElapsed * 10) / 10,
+      currentConsultationPredicted:   currentPredicted,
     };
 
     const formatPatient = (
       p: typeof waitingPatients[0],
       waitMinutes: number,
     ): PatientWithPrediction => ({
-      id: p.id,
-      tokenNumber: p.tokenNumber,
-      patientName: p.patientName,
-      appointmentType: p.appointmentType,
-      status: p.status,
-      createdAt: p.createdAt.toISOString(),
+      id:                   p.id,
+      tokenNumber:          p.tokenNumber,
+      patientName:          p.patientName,
+      appointmentType:      p.appointmentType,
+      status:               p.status,
+      createdAt:            p.createdAt.toISOString(),
       estimatedWaitMinutes: waitMinutes,
-      predictedDuration: p.consultation?.predictedDuration ?? 0,
+      predictedDuration:    p.consultation?.predictedDuration ?? 0,
+      estimationResult:     estimationMap[p.id] ?? null,
     });
 
     let currentPatientFormatted: PatientWithPrediction | null = null;
     if (currentPatient) {
       const remaining = Math.max(0, currentPredicted - currentElapsed);
       currentPatientFormatted = {
-        id: currentPatient.id,
-        tokenNumber: currentPatient.tokenNumber,
-        patientName: currentPatient.patientName,
-        appointmentType: currentPatient.appointmentType,
-        status: currentPatient.status,
-        createdAt: currentPatient.createdAt.toISOString(),
+        id:                   currentPatient.id,
+        tokenNumber:          currentPatient.tokenNumber,
+        patientName:          currentPatient.patientName,
+        appointmentType:      currentPatient.appointmentType,
+        status:               currentPatient.status,
+        createdAt:            currentPatient.createdAt.toISOString(),
         estimatedWaitMinutes: Math.max(0, Math.ceil(remaining)),
-        predictedDuration: currentPredicted,
+        predictedDuration:    currentPredicted,
+        estimationResult:     null,
       };
     }
 
     return {
-      currentPatient: currentPatientFormatted,
-      waitingPatients: waitingPatients.map((p) =>
-        formatPatient(p, waitTimeMap[p.id] ?? 0),
-      ),
+      currentPatient:  currentPatientFormatted,
+      waitingPatients: waitingPatients.map((p) => formatPatient(p, waitMap[p.id] ?? 0)),
       stats,
-      clinicName: settings?.clinicName ?? 'Queue Cure Clinic',
-      updatedAt: new Date().toISOString(),
+      clinicName:  settings?.clinicName ?? 'Queue Cure Clinic',
+      updatedAt:   new Date().toISOString(),
     };
   }
 
@@ -281,7 +357,7 @@ export class QueueService {
    */
   async getPatientByToken(tokenNumber: number) {
     return prisma.patient.findUnique({
-      where: { tokenNumber },
+      where:   { tokenNumber },
       include: { consultation: true },
     });
   }
@@ -291,11 +367,13 @@ export class QueueService {
    */
   async getAllPatients(status?: PatientStatus) {
     return prisma.patient.findMany({
-      where: status ? { status } : undefined,
+      where:   status ? { status } : undefined,
       orderBy: { tokenNumber: 'asc' },
       include: { consultation: true },
     });
   }
+
+  // ── Private ──────────────────────────────────────────────────────────────
 
   private async getTodayStats() {
     const startOfDay = new Date();

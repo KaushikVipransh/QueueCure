@@ -24,6 +24,15 @@ export interface Consultation {
   createdAt: string;
 }
 
+export interface EstimationResult {
+  optimistic: number;    // lower bound (p50-scaled)
+  likely: number;        // primary estimate shown to patient (with psych buffer)
+  worstCase: number;     // upper bound (p90-scaled with psych buffer)
+  tokensAhead: number;
+  confidence: 'low' | 'medium' | 'high';
+  basedOnSamples: number;
+}
+
 export interface PatientWithPrediction {
   id: string;
   tokenNumber: number;
@@ -33,6 +42,7 @@ export interface PatientWithPrediction {
   createdAt: string;
   estimatedWaitMinutes: number;
   predictedDuration: number;
+  estimationResult?: EstimationResult | null;
 }
 
 export interface QueueStats {

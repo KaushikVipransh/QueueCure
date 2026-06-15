@@ -2,12 +2,86 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { Clock, Users, Stethoscope, CheckCircle2, AlertCircle, ArrowLeft } from 'lucide-react';
+import { Clock, Users, Stethoscope, CheckCircle2, ArrowLeft, TrendingUp } from 'lucide-react';
 import clsx from 'clsx';
 import { useSocketContext, useJoinPatientRoom } from '@/contexts/SocketContext';
 import { useCountdown } from '@/hooks/useCountdown';
-import { Patient, QueueState, APPOINTMENT_TYPE_LABELS, STATUS_LABELS, formatCountdown } from '@/lib/types';
+import {
+  Patient,
+  QueueState,
+  EstimationResult,
+  APPOINTMENT_TYPE_LABELS,
+  formatCountdown,
+} from '@/lib/types';
 import { StatusBadge, AppointmentBadge } from '@/components/ui/Badge';
+
+// ─── Confidence Badge ─────────────────────────────────────────────────────────
+
+function ConfidenceBadge({ confidence, samples }: { confidence: EstimationResult['confidence']; samples: number }) {
+  const config = {
+    high:   { dots: 3, color: 'text-emerald-400', label: 'High accuracy' },
+    medium: { dots: 2, color: 'text-amber-400',   label: 'Building accuracy' },
+    low:    { dots: 1, color: 'text-slate-500',   label: 'Seed estimate' },
+  }[confidence];
+
+  return (
+    <div className="flex items-center gap-1.5 text-xs">
+      <span className={config.color}>
+        {Array.from({ length: 3 }).map((_, i) => (
+          <span key={i} className={i < config.dots ? config.color : 'text-slate-700'}>●</span>
+        ))}
+      </span>
+      <span className={config.color}>{config.label}</span>
+      <span className="text-slate-700">· {samples} sample{samples !== 1 ? 's' : ''}</span>
+    </div>
+  );
+}
+
+// ─── Wait Range Display ───────────────────────────────────────────────────────
+
+function WaitRangeDisplay({
+  estimation,
+  status,
+}: {
+  estimation: EstimationResult;
+  status: 'waiting' | 'in_consultation';
+}) {
+  const accentColor = status === 'in_consultation' ? 'text-brand-400' : 'text-amber-400';
+  const bgColor     = status === 'in_consultation' ? 'bg-brand-500/10 border-brand-500/20' : 'bg-amber-500/10 border-amber-500/20';
+
+  return (
+    <div className="flex flex-col items-center gap-3 w-full">
+      {/* Primary range */}
+      <div className="text-center">
+        <p className="text-xs text-slate-500 mb-1 tracking-widest uppercase">
+          {status === 'in_consultation' ? 'Est. remaining' : 'Estimated wait'}
+        </p>
+        <div className="flex items-baseline gap-1 justify-center">
+          <span className={clsx('text-5xl font-black font-mono tabular-nums', accentColor)}>
+            {estimation.optimistic}
+          </span>
+          <span className="text-2xl font-bold text-slate-500">–</span>
+          <span className={clsx('text-5xl font-black font-mono tabular-nums', accentColor)}>
+            {estimation.likely}
+          </span>
+          <span className="text-lg text-slate-400 ml-1">min</span>
+        </div>
+        <p className="text-xs text-slate-600 mt-1">Updates in real-time</p>
+      </div>
+
+      {/* Worst case + confidence */}
+      <div className={clsx('flex flex-col items-center gap-1.5 px-4 py-2.5 rounded-xl border w-full', bgColor)}>
+        <div className="flex items-center gap-2 text-xs text-slate-400">
+          <TrendingUp size={12} className="text-slate-500" />
+          <span>Worst case: <strong className="text-slate-300">{estimation.worstCase} min</strong></span>
+        </div>
+        <ConfidenceBadge confidence={estimation.confidence} samples={estimation.basedOnSamples} />
+      </div>
+    </div>
+  );
+}
+
+// ─── TrackingClient ───────────────────────────────────────────────────────────
 
 interface TrackingClientProps {
   initialPatient: Patient;
@@ -22,10 +96,8 @@ export function TrackingClient({
 }: TrackingClientProps) {
   const { queueState } = useSocketContext();
 
-  // Join the patient's specific socket room for targeted updates
   useJoinPatientRoom(initialPatient.tokenNumber);
 
-  // Derive live patient data from socket state
   const liveQueueState = queueState ?? initialQueueState;
 
   const isCurrentlyServing =
@@ -44,26 +116,27 @@ export function TrackingClient({
     ? liveQueueState.waitingPatients.findIndex((p) => p.tokenNumber === initialPatient.tokenNumber)
     : 0;
 
-  // Determine current status
   type LiveStatus = 'waiting' | 'in_consultation' | 'completed';
   let liveStatus: LiveStatus = 'waiting';
   if (isCurrentlyServing) liveStatus = 'in_consultation';
   else if (isCompleted) liveStatus = 'completed';
 
-  // Estimated wait time
+  // Estimate from the live queue state (includes estimationResult if available)
+  const liveEstimation = waitingPatient?.estimationResult ?? null;
+
+  // Fallback single-number estimate for countdown
   let estimatedWait: number;
   if (liveStatus === 'in_consultation') {
     estimatedWait = liveQueueState.stats.currentConsultationPredicted - liveQueueState.stats.currentConsultationElapsed;
     estimatedWait = Math.max(0, estimatedWait);
   } else if (liveStatus === 'waiting') {
-    estimatedWait = waitingPatient?.estimatedWaitMinutes ?? initialWaitMinutes;
+    estimatedWait = liveEstimation?.likely ?? waitingPatient?.estimatedWaitMinutes ?? initialWaitMinutes;
   } else {
     estimatedWait = 0;
   }
 
-  const countdown = useCountdown(estimatedWait);
-
-  const currentServing = liveQueueState.stats.currentToken;
+  const countdown       = useCountdown(estimatedWait);
+  const currentServing  = liveQueueState.stats.currentToken;
 
   return (
     <div className="min-h-screen bg-surface-800 flex flex-col items-center justify-center p-4 py-12">
@@ -73,8 +146,8 @@ export function TrackingClient({
           className={clsx(
             'w-[600px] h-[600px] rounded-full opacity-[0.06] transition-colors duration-1000',
             liveStatus === 'in_consultation' && 'bg-brand-500',
-            liveStatus === 'waiting' && 'bg-amber-500',
-            liveStatus === 'completed' && 'bg-emerald-500',
+            liveStatus === 'waiting'         && 'bg-amber-500',
+            liveStatus === 'completed'       && 'bg-emerald-500',
           )}
           style={{ filter: 'blur(80px)' }}
         />
@@ -95,7 +168,7 @@ export function TrackingClient({
           className={clsx(
             'glass-card p-8 flex flex-col items-center text-center gap-6 transition-all duration-500',
             liveStatus === 'in_consultation' && 'border-brand-500/30 glow-brand',
-            liveStatus === 'completed' && 'border-emerald-500/30 glow-emerald',
+            liveStatus === 'completed'       && 'border-emerald-500/30 glow-emerald',
           )}
         >
           {/* Status Badge */}
@@ -149,15 +222,19 @@ export function TrackingClient({
             </div>
           ) : (
             <div className="flex flex-col items-center gap-5 w-full animate-fade-in">
-              {/* Countdown */}
+              {/* Wait range or "you're next" */}
               {estimatedWait > 0 ? (
-                <div className="text-center">
-                  <p className="text-xs text-slate-500 mb-2 tracking-widest uppercase">Estimated wait</p>
-                  <p className="text-6xl font-black font-mono text-amber-400 tabular-nums animate-count-down">
-                    {countdown.formatted}
-                  </p>
-                  <p className="text-xs text-slate-600 mt-1">Updates in real-time</p>
-                </div>
+                liveEstimation ? (
+                  <WaitRangeDisplay estimation={liveEstimation} status="waiting" />
+                ) : (
+                  <div className="text-center">
+                    <p className="text-xs text-slate-500 mb-2 tracking-widest uppercase">Estimated wait</p>
+                    <p className="text-6xl font-black font-mono text-amber-400 tabular-nums animate-count-down">
+                      {countdown.formatted}
+                    </p>
+                    <p className="text-xs text-slate-600 mt-1">Updates in real-time</p>
+                  </div>
+                )
               ) : (
                 <div className="text-center">
                   <p className="text-amber-400 font-bold text-xl">You're next!</p>

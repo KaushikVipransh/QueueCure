@@ -9,6 +9,25 @@ import { PatientWithPrediction, APPOINTMENT_TYPE_LABELS, formatWaitTime } from '
 import { AppointmentBadge } from '@/components/ui/Badge';
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
 
+// ─── Confidence dot indicator ─────────────────────────────────────────────────
+
+const CONFIDENCE_CONFIG = {
+  high:   { filled: 3, color: 'text-emerald-400', title: 'High confidence' },
+  medium: { filled: 2, color: 'text-amber-400',   title: 'Medium confidence' },
+  low:    { filled: 1, color: 'text-slate-500',   title: 'Seed estimate' },
+};
+
+function ConfidenceDots({ confidence }: { confidence: 'low' | 'medium' | 'high' }) {
+  const cfg = CONFIDENCE_CONFIG[confidence];
+  return (
+    <span className={clsx('text-[10px]', cfg.color)} title={cfg.title}>
+      {Array.from({ length: 3 }).map((_, i) => (
+        <span key={i} className={i < cfg.filled ? cfg.color : 'text-slate-700'}>●</span>
+      ))}
+    </span>
+  );
+}
+
 interface QueueListProps {
   patients: PatientWithPrediction[];
 }
@@ -103,12 +122,22 @@ export function QueueList({ patients }: QueueListProps) {
                 <AppointmentBadge type={patient.appointmentType as any} className="mt-1" />
               </div>
 
-              {/* Wait time */}
+              {/* Wait time + confidence */}
               <div className="flex flex-col items-end gap-1 flex-shrink-0">
                 <div className="flex items-center gap-1 text-xs text-slate-400">
                   <Clock size={11} />
-                  <span className="font-mono">{formatWaitTime(patient.estimatedWaitMinutes)}</span>
+                  {patient.estimationResult ? (
+                    <span className="font-mono">
+                      {patient.estimationResult.optimistic}–{patient.estimationResult.likely}
+                      <span className="text-slate-600"> min</span>
+                    </span>
+                  ) : (
+                    <span className="font-mono">{formatWaitTime(patient.estimatedWaitMinutes)}</span>
+                  )}
                 </div>
+                {patient.estimationResult && (
+                  <ConfidenceDots confidence={patient.estimationResult.confidence} />
+                )}
                 <a
                   href={`/track/${patient.tokenNumber}`}
                   target="_blank"

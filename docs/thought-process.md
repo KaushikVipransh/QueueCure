@@ -25,96 +25,187 @@ After every mutation, the server computes the complete `QueueState` and broadcas
 
 ---
 
-## 2. Smart Wait-Time Prediction Engine
+## 2. HybridEstimator — 7-Layer Wait-Time Prediction Engine
 
-The engine has six stages that compose to produce an accurate, adaptive estimate:
+The estimator is a **single pure function** (`HybridEstimator.compute()`) composed of independent, removable layers. Missing inputs degrade gracefully — they never crash the system.
 
-### Stage 1: Baselines
+```
+Data Layer          Estimation Layer         Presentation Layer
+──────────          ────────────────         ──────────────────
+Every event    →    Hybrid estimator    →    Range shown to patient
+stored raw          (rolling + %ile
+with metadata       + classification)   →    Confidence shown
+                         ↓
+                    Raw logs ready
+                    for ML later
+```
+
+### The Schema Was Designed First
+
+Before building the estimator, the `ConsultationRecord` schema was designed. This is intentional: the ML upgrade path requires **zero data migration** because every field the future model needs is already being written.
+
+### Layer 1: Seed Time (receptionist input)
 
 Before any data is collected, the system falls back to clinically reasonable defaults:
-- Follow-up: 8 minutes
-- General: 15 minutes
-- New Patient: 25 minutes
-- Specialist: 35 minutes
 
-These are configurable in `predictionService.ts`.
-
-### Stage 2: Actual Duration Tracking
-
-Every consultation records:
-- `start_time`: set when "Call Next" is clicked
-- `end_time`: set when "Mark Complete" is clicked
-- `actual_duration`: computed as `(end - start) / 60000` minutes
-
-This creates the training data for the model.
-
-### Stage 3: Per-Type Averages
-
-The `prediction_metrics` table stores per-appointment-type statistics separately. A follow-up average is not polluted by specialist consultation durations. This type isolation significantly improves prediction accuracy.
-
-### Stage 4: Weighted Blend (70/30)
-
-```
-predicted = 0.7 × recent_average + 0.3 × historical_average
-```
-
-- **Recent average** uses Exponential Moving Average (EMA, α=0.3): `EMA = 0.3 × actual + 0.7 × prev_EMA`
-  - Responds quickly to behavioral changes (doctor running fast today)
-  - Doesn't overreact to single outliers
-- **Historical average** uses cumulative mean over all-time samples
-  - Provides stability / prevents wild swings from a single unusual consultation
-
-The 70/30 split means: trust today's pattern more, but anchor to historical baseline.
-
-### Stage 5: Context Modifiers
-
-Applied multiplicatively after the weighted blend:
-
-| Condition | Modifier | Rationale |
+| Type | Baseline | Classification Weight |
 |---|---|---|
-| Peak hours (9-11 AM, 4-6 PM) | +10% | More complex cases tend to arrive during peak hours |
-| Long queue (>8 patients) | +5% | Doctor cognitive load increases, slight slowdown |
-| Doctor running fast (ratio < 0.9) | -10% | Actual data shows consistently faster pace |
-| Doctor running slow (ratio > 1.15) | +10% | Actual data shows consistently slower pace |
+| Follow-up | 8 min | 0.6× |
+| General | 15 min | 1.0× |
+| New Patient | 25 min | 1.3× |
+| Specialist | 35 min | 1.8× |
 
-The doctor speed factor is computed from the last 5 completed consultations: `avg(actual / predicted)`. If the ratio is consistently below 0.9, the doctor is outpacing predictions.
+Handles Day 0 with zero data. Independently removable.
 
-### Stage 6: Current Consultation Remaining
-
-Rather than using the full predicted duration for the current patient:
+### Layer 2: Rolling Average with Cold-Start Blend
 
 ```
-remaining = max(0, predicted_duration - elapsed_minutes)
+blended = (seedWeight × seed) + ((1 - seedWeight) × rollingAvg)
+seedWeight = max(0, 1 - samples / WINDOW)  // WINDOW = 10
 ```
 
-This is critical. If the current consultation has 2 minutes left (not 15), every waiting patient's wait time is 13 minutes shorter. Recalculated every time the queue changes.
+- **Starts 100% seed**, transitions to 100% real data by 10 samples per type
+- If fewer than 3 same-type samples exist, falls back to broader pool (cold-start)
+- Per-type isolation: follow-up averages don't pollute specialist estimates
 
-### Final Formula
+### Layer 3: Percentile Range (p50 / p75 / p90)
+
+Rather than a single point estimate, the engine computes an **honest range** over the last 20 samples:
 
 ```
-wait(patient at position i) =
-  remaining_current_consultation +
-  Σ predicted_duration(patients at positions 0 to i-1)
+scale.low  = p50 / p75   (optimistic bound)
+scale.high = p90 / p75   (worst-case bound)
 ```
 
-Recalculated on every `queue-updated` broadcast.
+Falls back to a symmetric `[0.8×, 1.4×]` range when fewer than 5 samples exist.
+
+### Layer 4: Patient Classification Weights
+
+Each patient ahead in the queue contributes a **per-patient estimate** scaled by their individual visit type:
+
+```
+queueTime = Σ (rollingAvg(type) × weight(type) + TRANSITION_GAP)
+```
+
+This is the key upgrade over uniform multiplication. A queue of [followup, followup, specialist] is estimated very differently from [specialist, specialist, specialist].
+
+### Layer 5: Elapsed Correction for Current Patient
+
+Rather than using the full predicted duration for the patient currently being seen:
+
+```
+remaining = max(0, expected - elapsed_minutes)
+```
+
+This is critical. If the current consultation has 2 minutes left (not 15), every waiting patient's estimate is 13 minutes shorter. Recalculated on every `queue-updated` broadcast.
+
+### Layer 6: Psychological Buffer
+
+```
+likely    = ceil(midEstimate × 1.08)
+worstCase = ceil(highEstimate × 1.08)
+```
+
+A slight upward bias (1.08×) builds patient trust. Patients are more satisfied when they're called before the displayed estimate than when they wait longer than shown.
+
+### Layer 7: Full Audit Log → ML Training Data
+
+Every `compute()` call writes a row to `prediction_audit_logs` with:
+- All input features: `visitType`, `tokensAhead`, `timeOfDay`, `dayOfWeek`, `dataPointsAvailable`, `rollingAvg`
+- All outputs: `predictedOptimistic`, `predictedLikely`, `predictedWorstCase`, `confidence`
+- `actualWait` nullable — backfilled when the patient is called (the training label)
+
+This accumulates silently. At 2,000+ consultations across clinics, this is a real ML training dataset.
+
+### ML Upgrade Path
+
+You don't rewrite anything. You replace one method:
+
+```typescript
+// Today (hackathon)
+const base = await estimator.getRollingAverage(visitType);
+
+// 6 months later, after collecting data
+const base = await mlModel.predict({ visitType, timeOfDay, dayOfWeek, queueDepth, ... });
+
+// Everything downstream stays identical
+```
+
+### What Each Layer Contributes
+
+```
+Seed time (receptionist input)
+  └── handles Day 0, zero data
+
+  + Rolling average with cold-start blend
+      └── adapts within a session, per visit type
+
+    + Percentile range instead of point estimate
+        └── honest about uncertainty, catches fat-tail cases
+
+      + Patient classification weights
+          └── per-patient accuracy, not uniform averaging
+
+        + Elapsed correction for current patient
+            └── real-time accuracy as session progresses
+
+          + Psychological buffer
+              └── patient trust, perceived reliability
+
+            + Full audit log of features + predictions
+                └── ML training data, free, accumulating silently
+```
+
+Each layer is independently removable. If classification data isn't collected, weights default to 1.0 and the rest still works.
+
+### Confidence Signal
+
+| Samples | Confidence | Display |
+|---|---|---|
+| 0–2 | `low` | ●○○ Seed estimate |
+| 3–9 | `medium` | ●●○ Building accuracy |
+| 10+ | `high` | ●●● High accuracy |
+
+### Winsorization
+
+Before storing any actual duration, the estimator caps outliers:
+
+```
+capped = min(actual, p50 × 3)
+```
+
+One 45-minute complex case doesn't poison the rolling average for the next 10 patients.
 
 ---
 
-## 3. Historical Learning Mechanism
+## 3. Data Storage Strategy
 
-The learning is continuous and online — no batch retraining needed:
+### You Never Throw Data Away
 
+Every completed consultation writes a full `ConsultationRecord` with:
+- **Identity**: `sessionId`, `tokenNumber`, `visitType`
+- **Timing**: `registeredAt`, `calledAt`, `startTime`, `endTime` — all four timestamps
+- **Derived**: `actualWaitMinutes`, `actualConsultMinutes`, `transitionGapMinutes` — computed and stored, never recomputed
+- **Queue context**: `queueDepthAtCall`, `timeOfDay`, `dayOfWeek`
+- **Prediction audit**: `predictedWaitAtRegistration`, `predictionError`
+
+### You Never Compute on the Client
+
+All estimation logic runs server-side in `HybridEstimator`. The client receives pre-computed `EstimationResult` objects:
+
+```typescript
+interface EstimationResult {
+  optimistic: number;    // lower bound shown to patient
+  likely: number;        // primary estimate (with psych buffer)
+  worstCase: number;     // upper bound
+  confidence: 'low' | 'medium' | 'high';
+  basedOnSamples: number;
+}
 ```
-After each completed consultation:
-  1. Calculate actual_duration
-  2. Update prediction_metrics for that appointment type:
-     - historical_average = (old_avg × old_count + actual) / new_count
-     - recent_average = 0.3 × actual + 0.7 × old_recent_avg
-     - sample_count += 1
-```
 
-Convergence: After 3 samples, the system switches from baseline to learned values. After ~10 samples, the prediction typically converges within ±15% of actual durations.
+### The Estimator is One Pure Function
+
+`HybridEstimator.compute()` is stateless across restarts. All history is read from DB. No in-memory state to lose on process restart.
 
 ---
 
@@ -138,7 +229,7 @@ The most critical operation. If two receptionists click "Call Next" simultaneous
 3. Transaction A acquires the lock first:
    - Checks `in_consultation` count = 0 ✓
    - Finds next waiting patient
-   - Updates to `in_consultation`
+   - Updates to `in_consultation`, writes `calledAt` + `queueDepthAtCall`
    - Commits
 4. Transaction B runs:
    - Checks `in_consultation` count = 1 → **throws 409 error**
@@ -154,7 +245,13 @@ Only one transition happens. The second receptionist sees a clear error message.
 [cancelled]  (only from waiting, not from in_consultation)
 ```
 
-The `cancelled` state is used when a patient is removed from the queue before being called.
+### Lifecycle Metadata Writes
+
+| Event | What gets written |
+|---|---|
+| `addPatient` | `registeredAt`, `sessionId`, `predictedWaitAtRegistration` |
+| `callNext` | `calledAt`, `actualWaitMinutes`, `queueDepthAtCall`, `timeOfDay`, `dayOfWeek` |
+| `completeConsultation` | `endTime`, `actualDuration`, `transitionGapMinutes`, `predictionError` |
 
 ---
 
@@ -167,10 +264,12 @@ The `cancelled` state is used when a patient is removed from the queue before be
 | Empty queue when calling next | 404 error: "Queue is empty" |
 | Patient not found by token | 404 + `notFound()` in Next.js |
 | Socket disconnect/reconnect | Client auto-reconnects; server sends fresh state on connect |
-| Backend restart | Clients reconnect; fresh state fetched from DB |
-| Zero historical data | Falls back to baseline predictions |
+| Backend restart | Clients reconnect; fresh state fetched from DB; estimator stateless |
+| Zero historical data | Falls back to seed baselines (Layer 1) |
+| Fewer than 3 per-type samples | Cold-start blend uses broader pool |
 | Consultation running over predicted time | Remaining = 0 (floor at 0, never negative) |
-| Very long queue (>30) | +5% modifier applied automatically |
+| Outlier consultation (45+ min) | Winsorized at p50 × 3 before storage |
+| `logPrediction` DB write fails | Fire-and-forget, wrapped in try/catch — never crashes estimation |
 
 ---
 
@@ -187,32 +286,14 @@ The current architecture is optimized for single-clinic use (1 doctor, 1 queue, 
 
 For multi-clinic or high-throughput scenarios:
 
-1. **Horizontal scaling**: Add Redis pub/sub adapter for Socket.IO (`@socket.io/redis-adapter`). This allows multiple backend instances to broadcast events to all clients regardless of which server they're connected to.
+1. **Horizontal scaling**: Add Redis pub/sub adapter for Socket.IO (`@socket.io/redis-adapter`). Multiple backend instances can broadcast events to all clients regardless of which server they're connected to.
 
-2. **Multi-queue support**: Add `clinic_id` foreign key to all tables. Socket.IO rooms become `clinic-{id}` — clients only receive updates for their clinic.
+2. **Multi-queue support**: Add `clinic_id` / `doctor_id` foreign keys to all tables. Socket.IO rooms become `clinic-{id}`. `sessionId` already prefixes with date — extend to `"{clinicId}_{date}"`.
 
 3. **Read replicas**: Analytics queries (dashboard charts) can hit a Supabase read replica, freeing the primary for queue mutations.
 
-4. **Prediction service isolation**: The prediction engine can be extracted to a separate microservice with its own compute resources. Queue events trigger async prediction updates via a message queue (e.g., Redis Streams).
+4. **Prediction service isolation**: `HybridEstimator` can be extracted to a separate service. The `prediction_audit_logs` table provides a clean async event stream — compute offline and push results back.
 
-5. **Rate limiting**: Add `express-rate-limit` middleware to prevent abuse of the add-patient endpoint.
+5. **ML model integration**: Replace `getRollingAverage()` with a model API call. Zero changes required to schema, queue service, or frontend.
 
----
-
-## 7. Database Indexing Strategy
-
-Critical indexes for production:
-
-```sql
--- Fast queue status query (most common operation)
-CREATE INDEX idx_patients_status ON patients(status);
-CREATE INDEX idx_patients_status_token ON patients(status, token_number ASC);
-
--- Fast analytics date filtering
-CREATE INDEX idx_patients_created_at ON patients(created_at);
-CREATE INDEX idx_consultations_end_time ON consultations(end_time);
-
--- Prediction metrics lookup (small table, already indexed by appointmentType unique)
-```
-
-Prisma automatically creates indexes for `@unique` fields. The composite index on `(status, token_number)` is the most important one to add manually for production.
+6. **Rate limiting**: Add `express-rate-limit` middleware to prevent abuse of the add-patient endpoint.

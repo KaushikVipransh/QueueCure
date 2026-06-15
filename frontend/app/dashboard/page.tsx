@@ -121,24 +121,44 @@ export default function DashboardPage() {
             {/* Prediction Info */}
             <div className="glass-card p-5">
               <p className="section-label">Prediction Engine</p>
-              <div className="flex flex-col gap-3 text-xs text-slate-400">
+              <div className="flex flex-col gap-2 mb-3">
                 {[
-                  { type: 'Follow-up', dur: '8 min', color: 'bg-cyan-400' },
-                  { type: 'General', dur: '15 min', color: 'bg-violet-400' },
-                  { type: 'New Patient', dur: '25 min', color: 'bg-emerald-400' },
-                  { type: 'Specialist', dur: '35 min', color: 'bg-orange-400' },
+                  { layer: 'Seed baseline',        status: '✓ active', color: 'text-slate-500' },
+                  { layer: 'Rolling avg blend',     status: '✓ active', color: 'text-slate-500' },
+                  { layer: 'Percentile range',      status: '✓ active', color: 'text-brand-400' },
+                  { layer: 'Visit-type weights',    status: '✓ active', color: 'text-brand-400' },
+                  { layer: 'Elapsed correction',    status: '✓ active', color: 'text-brand-400' },
+                  { layer: 'Psych buffer (1.08×)',  status: '✓ active', color: 'text-emerald-400' },
+                  { layer: 'Audit log → ML data',   status: '✓ logging', color: 'text-emerald-400' },
                 ].map((item) => (
-                  <div key={item.type} className="flex items-center gap-2">
+                  <div key={item.layer} className="flex items-center justify-between text-xs">
+                    <span className="text-slate-400">{item.layer}</span>
+                    <span className={item.color}>{item.status}</span>
+                  </div>
+                ))}
+              </div>
+              <div className="flex flex-col gap-2 border-t border-white/[0.05] pt-3">
+                {[
+                  { type: 'Follow-up',   dur: '8 min',  color: 'bg-cyan-400',     weight: '0.6×' },
+                  { type: 'General',     dur: '15 min', color: 'bg-violet-400',   weight: '1.0×' },
+                  { type: 'New Patient', dur: '25 min', color: 'bg-emerald-400',  weight: '1.3×' },
+                  { type: 'Specialist',  dur: '35 min', color: 'bg-orange-400',   weight: '1.8×' },
+                ].map((item) => (
+                  <div key={item.type} className="flex items-center gap-2 text-xs">
                     <span className={`w-2 h-2 rounded-full flex-shrink-0 ${item.color}`} />
-                    <span className="flex-1">{item.type}</span>
-                    <span className="font-mono text-slate-500 font-medium">{item.dur} base</span>
+                    <span className="flex-1 text-slate-400">{item.type}</span>
+                    <span className="font-mono text-slate-600">{item.dur}</span>
+                    <span className="font-mono text-slate-500">{item.weight}</span>
                   </div>
                 ))}
               </div>
               <p className="text-xs text-slate-600 mt-3 leading-relaxed">
-                Predictions adapt using a 70% recent ÷ 30% historical weighted formula updated after each consultation.
+                Ranges shown as <strong className="text-slate-500">optimistic – likely</strong>.
+                Confidence grows with each completed consultation.
+                Every prediction is logged for future ML training.
               </p>
             </div>
+
           </div>
         </div>
       </main>

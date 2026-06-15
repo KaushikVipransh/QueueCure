@@ -1,4 +1,6 @@
 import { AppointmentType, Patient, Consultation } from '@prisma/client';
+import { EstimationResult } from '../services/hybridEstimator';
+export type { EstimationResult } from '../services/hybridEstimator';
 
 // ─── Shared response shapes ───────────────────────────────────────────────────
 
@@ -15,6 +17,28 @@ export interface PatientWithPrediction {
   createdAt: string;
   estimatedWaitMinutes: number;
   predictedDuration: number;
+  estimationResult?: EstimationResult | null;
+}
+
+/** Full ConsultationRecord shape — mirrors the DB schema exactly */
+export interface ConsultationRecord {
+  sessionId: string;
+  tokenNumber: number;
+  visitType: AppointmentType;
+  chiefComplaint: string | null;
+  patientAgeGroup: string | null;
+  registeredAt: Date;
+  calledAt: Date;
+  consultationStarted: Date | null;
+  consultationEnded: Date | null;
+  actualWaitMinutes: number;
+  actualConsultMinutes: number;
+  transitionGapMinutes: number;
+  queueDepthAtCall: number;
+  timeOfDay: string;
+  dayOfWeek: number;
+  predictedWaitAtRegistration: number;
+  predictionError: number;
 }
 
 export interface QueueStats {

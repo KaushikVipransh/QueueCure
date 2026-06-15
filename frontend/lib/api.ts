@@ -1,4 +1,4 @@
-import { QueueState, Patient, AnalyticsData, PredictionMetric } from './types';
+import { QueueState, Patient, AnalyticsData, PredictionMetric, EstimationResult } from './types';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001';
 
@@ -49,6 +49,12 @@ export async function getPatientByToken(tokenNumber: number): Promise<{
   queueState: QueueState;
 }> {
   return apiFetch(`/api/v1/patients/token/${tokenNumber}`);
+}
+
+export async function getEstimationForPatient(
+  patientId: string,
+): Promise<{ patientId: string; estimationResult: EstimationResult }> {
+  return apiFetch(`/api/v1/queue/estimation/${patientId}`);
 }
 
 // ─── Analytics ────────────────────────────────────────────────────────────────

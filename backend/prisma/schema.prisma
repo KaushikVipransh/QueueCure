@@ -46,7 +46,40 @@ model Consultation {
   createdAt         DateTime        @default(now()) @map("created_at")
   patient           Patient         @relation(fields: [patientId], references: [id], onDelete: Cascade)
 
+  // ── ConsultationRecord metadata (for HybridEstimator + ML pipeline) ───────
+  sessionId                  String?  @map("session_id")               // groups one clinic day: "clinicId_YYYY-MM-DD"
+  registeredAt               DateTime? @map("registered_at")            // when token was issued
+  calledAt                   DateTime? @map("called_at")                // when "Call Next" was clicked
+  actualWaitMinutes          Float?   @map("actual_wait_minutes")       // calledAt - registeredAt
+  transitionGapMinutes       Float?   @map("transition_gap_minutes")    // startTime - calledAt
+  queueDepthAtCall           Int?     @map("queue_depth_at_call")       // waiting patients when called
+  timeOfDay                  String?  @map("time_of_day")               // "morning" | "afternoon" | "evening"
+  dayOfWeek                  Int?     @map("day_of_week")               // 0-6
+  predictedWaitAtRegistration Float?  @map("predicted_wait_at_registration")
+  predictionError            Float?   @map("prediction_error")          // actualWait - predicted
+  chiefComplaint             String?  @map("chief_complaint")           // free text, nullable
+  patientAgeGroup            String?  @map("patient_age_group")         // "child" | "adult" | "senior", nullable
+
   @@map("consultations")
+}
+
+// ── ML Training Data: every prediction logged with full feature context ───────
+model PredictionAuditLog {
+  id                  String   @id @default(uuid())
+  timestamp           DateTime @default(now())
+  visitType           String   @map("visit_type")
+  tokensAhead         Int      @map("tokens_ahead")
+  timeOfDay           Int      @map("time_of_day")             // hour 0-23
+  dayOfWeek           Int      @map("day_of_week")
+  dataPointsAvailable Int      @map("data_points_available")
+  rollingAvg          Float    @map("rolling_avg")
+  predictedOptimistic Int      @map("predicted_optimistic")
+  predictedLikely     Int      @map("predicted_likely")
+  predictedWorstCase  Int      @map("predicted_worst_case")
+  confidence          String   @map("confidence")              // "low" | "medium" | "high"
+  actualWait          Float?   @map("actual_wait")             // filled in after consultation completes
+
+  @@map("prediction_audit_logs")
 }
 
 model QueueSettings {

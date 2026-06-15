@@ -1,7 +1,10 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { Server } from 'socket.io';
+import { AppointmentType } from '@prisma/client';
 import { queueService } from '../services/queueService';
+import { predictionService } from '../services/predictionService';
 import { broadcastQueueUpdate } from '../socket/socketManager';
+import { prisma } from '../lib/prisma';
 
 export const queueRouter = Router();
 
@@ -70,6 +73,49 @@ queueRouter.post('/complete', async (req: Request, res: Response, next: NextFunc
     io.emit('queue-updated', state);
 
     res.json({ success: true, patient, queueState: state });
+  } catch (err) {
+    next(err);
+  }
+});
+// GET /api/v1/queue/estimation/:patientId — Full estimation result for a waiting patient
+queueRouter.get('/estimation/:patientId', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { patientId } = req.params as { patientId: string };
+
+    // Find the patient and all waiting patients (to build queue context)
+    const [patient, waitingPatients, currentPatient] = await Promise.all([
+      prisma.patient.findUnique({ where: { id: patientId } }),
+      prisma.patient.findMany({
+        where:   { status: 'waiting' },
+        orderBy: { tokenNumber: 'asc' },
+      }),
+      prisma.patient.findFirst({
+        where:   { status: 'in_consultation' },
+        include: { consultation: true },
+      }),
+    ]);
+
+    if (!patient) {
+      res.status(404).json({ error: 'Patient not found.' });
+      return;
+    }
+
+    const patientIndex  = waitingPatients.findIndex((p) => p.id === patientId);
+    const patientsAhead = patientIndex > 0
+      ? waitingPatients.slice(0, patientIndex).map((p) => p.appointmentType as AppointmentType)
+      : [];
+
+    const estimationResult = await predictionService.getEstimationResult(
+      patient.appointmentType as AppointmentType,
+      Math.max(0, patientIndex),
+      patientsAhead,
+      currentPatient?.appointmentType as AppointmentType ?? null,
+      currentPatient?.consultation?.startTime
+        ? new Date(currentPatient.consultation.startTime)
+        : null,
+    );
+
+    res.json({ patientId, estimationResult });
   } catch (err) {
     next(err);
   }
