@@ -32,10 +32,14 @@ export async function completeConsultation(): Promise<{ success: boolean; queueS
 
 // ─── Patients ─────────────────────────────────────────────────────────────────
 
-export async function addPatient(patientName: string, appointmentType: string) {
-  return apiFetch<{ success: boolean; patient: Patient }>('/api/v1/patients', {
+export async function addPatient(
+  patientName: string,
+  appointmentType: string,
+  phoneNumber?: string,
+) {
+  return apiFetch<{ success: boolean; patient: Patient; smsSent: boolean }>('/api/v1/patients', {
     method: 'POST',
-    body: JSON.stringify({ patientName, appointmentType }),
+    body: JSON.stringify({ patientName, appointmentType, phoneNumber: phoneNumber || undefined }),
   });
 }
 

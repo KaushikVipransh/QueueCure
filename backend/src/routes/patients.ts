@@ -9,9 +9,10 @@ export const patientsRouter = Router();
 // POST /api/v1/patients — Add a new patient
 patientsRouter.post('/', async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { patientName, appointmentType } = req.body as {
+    const { patientName, appointmentType, phoneNumber } = req.body as {
       patientName: string;
       appointmentType: AppointmentType;
+      phoneNumber?: string;
     };
 
     if (!patientName?.trim()) {
@@ -28,15 +29,31 @@ patientsRouter.post('/', async (req: Request, res: Response, next: NextFunction)
       return;
     }
 
-    const patient = await queueService.addPatient(patientName, appointmentType);
+    // Validate phone number format if provided (E.164 or digits-only accepted)
+    if (phoneNumber && phoneNumber.trim()) {
+      const cleaned = phoneNumber.trim().replace(/\s/g, '');
+      if (!/^\+?[1-9]\d{6,14}$/.test(cleaned)) {
+        res.status(400).json({ error: 'Invalid phone number format. Use E.164 format e.g. +919876543210' });
+        return;
+      }
+    }
+
+    const patient = await queueService.addPatient(
+      patientName,
+      appointmentType,
+      phoneNumber?.trim() || undefined,
+    );
     const io: Server = req.app.get('io');
 
-    // Emit patient-added event + broadcast full state update
     const state = await queueService.getQueueState();
     io.emit('patient-added', { patient, queueState: state });
     io.emit('queue-updated', state);
 
-    res.status(201).json({ success: true, patient });
+    res.status(201).json({
+      success: true,
+      patient,
+      smsSent: !!(patient.phoneNumber && patient.smsSent),
+    });
   } catch (err) {
     next(err);
   }

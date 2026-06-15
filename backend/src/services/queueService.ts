@@ -1,6 +1,7 @@
 import { AppointmentType, PatientStatus } from '@prisma/client';
 import { prisma } from '../lib/prisma';
 import { predictionService } from './predictionService';
+import { smsService } from './smsService';
 import { QueueState, PatientWithPrediction, QueueStats } from '../types';
 import { createError } from '../middleware/errorHandler';
 
@@ -31,7 +32,11 @@ export class QueueService {
    * Add a new patient to the queue.
    * Records registeredAt + predictedWaitAtRegistration for audit trail.
    */
-  async addPatient(patientName: string, appointmentType: AppointmentType) {
+  async addPatient(
+    patientName: string,
+    appointmentType: AppointmentType,
+    phoneNumber?: string,
+  ) {
     const predictedDuration = await predictionService.getPredictedDuration(appointmentType);
 
     // Estimate wait at registration time so we can compute prediction error later
@@ -67,14 +72,15 @@ export class QueueService {
           data: {
             tokenNumber:  nextToken,
             patientName:  patientName.trim(),
+            phoneNumber:  phoneNumber?.trim() || null,
             appointmentType,
             status: 'waiting',
             consultation: {
               create: {
                 appointmentType,
                 predictedDuration,
-                sessionId:                  getSessionId(),
-                registeredAt:               new Date(),
+                sessionId:                   getSessionId(),
+                registeredAt:                new Date(),
                 predictedWaitAtRegistration: registrationEstimate.likely,
               },
             },
@@ -82,6 +88,27 @@ export class QueueService {
           include: { consultation: true },
         });
       });
+
+      // Fire SMS after transaction commits (non-blocking — never throws)
+      if (patient.phoneNumber) {
+        const settings = await prisma.queueSettings.findFirst();
+        const clinicName = settings?.clinicName ?? 'Queue Cure Clinic';
+
+        smsService.sendTrackingLink({
+          to:          patient.phoneNumber,
+          patientName: patient.patientName,
+          tokenNumber: patient.tokenNumber,
+          clinicName,
+        }).then(async (sent) => {
+          if (sent) {
+            // Mark smsSent so we have an audit trail
+            await prisma.patient.update({
+              where: { id: patient.id },
+              data:  { smsSent: true },
+            }).catch(() => {}); // best-effort
+          }
+        }).catch(() => {}); // never let SMS errors surface
+      }
 
       return patient;
     } catch (err: any) {

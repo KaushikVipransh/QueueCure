@@ -7,8 +7,10 @@ export interface Patient {
   id: string;
   tokenNumber: number;
   patientName: string;
+  phoneNumber: string | null;
   appointmentType: AppointmentType;
   status: PatientStatus;
+  smsSent: boolean;
   createdAt: string;
   consultation?: Consultation | null;
 }

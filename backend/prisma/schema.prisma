@@ -26,14 +26,17 @@ model Patient {
   id              String          @id @default(uuid())
   tokenNumber     Int             @unique @map("token_number")
   patientName     String          @map("patient_name")
+  phoneNumber     String?         @map("phone_number")          // optional — for SMS tracking link
   appointmentType AppointmentType @map("appointment_type")
   status          PatientStatus   @default(waiting)
+  smsSent         Boolean         @default(false) @map("sms_sent")  // audit: was SMS delivered?
   createdAt       DateTime        @default(now()) @map("created_at")
   updatedAt       DateTime        @updatedAt @map("updated_at")
   consultation    Consultation?
 
   @@map("patients")
 }
+
 
 model Consultation {
   id                String          @id @default(uuid())
