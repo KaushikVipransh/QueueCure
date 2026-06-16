@@ -32,19 +32,21 @@ const CHART_TOOLTIP_STYLE = {
 
 export function AnalyticsPanel() {
   const [data, setData] = useState<AnalyticsData | null>(null);
-  const [loading, setLoading] = useState(true);
+  // initialLoading: true only until the first fetch completes (shows spinner)
+  // Background interval re-fetches keep existing data visible — no flash.
+  const [initialLoading, setInitialLoading] = useState(true);
   const [tab, setTab] = useState<'hourly' | 'distribution' | 'trend'>('hourly');
 
   useEffect(() => {
     const fetchData = async () => {
       try {
-        setLoading(true);
         const analytics = await getAnalytics();
         setData(analytics);
       } catch {
         // Silently handle — analytics are supplementary
       } finally {
-        setLoading(false);
+        // Only clear the initial spinner once (subsequent refreshes keep data visible)
+        setInitialLoading(false);
       }
     };
 
@@ -53,7 +55,7 @@ export function AnalyticsPanel() {
     return () => clearInterval(interval);
   }, []);
 
-  if (loading) {
+  if (initialLoading) {
     return (
       <div className="glass-card p-6 flex items-center justify-center h-64">
         <LoadingSpinner />

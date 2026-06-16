@@ -28,14 +28,14 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  themeColor: '#06b6d4',
-  colorScheme: 'dark',
+  themeColor: '#0A1931',
+  colorScheme: 'light',
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" className={inter.variable}>
-      <body className="min-h-screen bg-surface-800 text-slate-100 antialiased">
+      <body className="min-h-screen antialiased" style={{ background: '#F6FAFD', color: '#0A1931' }}>
         <SocketProvider>
           {children}
           <Toaster
@@ -43,19 +43,19 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             toastOptions={{
               duration: 4000,
               style: {
-                background: '#111827',
-                color: '#f1f5f9',
-                border: '1px solid rgba(255,255,255,0.08)',
+                background: '#FFFFFF',
+                color: '#0A1931',
+                border: '1px solid #D4E4F0',
                 borderRadius: '12px',
-                fontSize: '14px',
+                fontSize: '13px',
                 padding: '12px 16px',
-                boxShadow: '0 8px 32px rgba(0,0,0,0.4)',
+                boxShadow: '0 8px 24px rgba(10,25,49,0.12)',
               },
               success: {
-                iconTheme: { primary: '#34d399', secondary: '#111827' },
+                iconTheme: { primary: '#0f9b6e', secondary: '#FFFFFF' },
               },
               error: {
-                iconTheme: { primary: '#fb7185', secondary: '#111827' },
+                iconTheme: { primary: '#c93636', secondary: '#FFFFFF' },
               },
             }}
           />

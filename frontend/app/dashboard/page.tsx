@@ -2,24 +2,75 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { Monitor, Activity, RefreshCw } from 'lucide-react';
+import {
+  Monitor, Activity, LayoutDashboard, Users, BarChart2,
+  Settings, ExternalLink, Link as LinkIcon, TrendingUp, Zap,
+} from 'lucide-react';
 import { useSocketContext } from '@/contexts/SocketContext';
 import { getQueueStatus } from '@/lib/api';
 import { QueueState } from '@/lib/types';
 import { AddPatientForm } from '@/components/dashboard/AddPatientForm';
 import { CurrentPatient } from '@/components/dashboard/CurrentPatient';
 import { QueueList } from '@/components/dashboard/QueueList';
-import { StatsPanel } from '@/components/dashboard/StatsPanel';
 import { AnalyticsPanel } from '@/components/dashboard/AnalyticsPanel';
 import { ConnectionStatus } from '@/components/ui/ConnectionStatus';
+import { QueueAnimation } from '@/components/ui/QueueAnimation';
 import { FullPageLoader } from '@/components/ui/LoadingSpinner';
 
+/* ─── Sidebar NavItem ────────────────────────────────────────────────────── */
+function NavItem({
+  icon: Icon,
+  label,
+  active = false,
+  href,
+  external,
+}: {
+  icon: React.ElementType;
+  label: string;
+  active?: boolean;
+  href?: string;
+  external?: boolean;
+}) {
+  const style: React.CSSProperties = active
+    ? { background: 'rgba(74,127,167,0.25)', color: '#B3CFE5', borderRadius: 10 }
+    : { color: 'rgba(179,207,229,0.6)', borderRadius: 10 };
+
+  const inner = (
+    <>
+      <Icon size={15} />
+      <span className="flex-1">{label}</span>
+      {external && <ExternalLink size={11} style={{ color: 'rgba(179,207,229,0.35)' }} />}
+    </>
+  );
+
+  const cls = 'flex items-center gap-3 px-3 py-2.5 text-[13px] font-medium w-full transition-all duration-150';
+
+  if (href) {
+    return (
+      <Link href={href} target={external ? '_blank' : undefined} className={cls} style={style}>
+        {inner}
+      </Link>
+    );
+  }
+  return <button className={cls} style={style}>{inner}</button>;
+}
+
+/* ─── Inline stats for sidebar ──────────────────────────────────────────── */
+function SidebarStat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex items-center justify-between py-1">
+      <span className="text-xs" style={{ color: 'rgba(179,207,229,0.55)' }}>{label}</span>
+      <span className="text-xs font-bold font-mono" style={{ color: '#B3CFE5' }}>{value}</span>
+    </div>
+  );
+}
+
+/* ─── Dashboard Page ─────────────────────────────────────────────────────── */
 export default function DashboardPage() {
   const { queueState: socketState } = useSocketContext();
   const [localState, setLocalState] = useState<QueueState | null>(null);
   const [initialLoading, setInitialLoading] = useState(true);
 
-  // Use socket state if available, else local fetched state
   const state = socketState ?? localState;
 
   useEffect(() => {
@@ -31,55 +82,163 @@ export default function DashboardPage() {
 
   if (initialLoading) return <FullPageLoader message="Loading Queue Cure..." />;
 
+  const waiting = state?.waitingPatients.length ?? 0;
+  const stats = state?.stats;
+  const nowToken = stats?.currentToken;
+  const avgMin = stats?.avgConsultationDuration ?? 0;
+  const served = stats?.patientsServedToday ?? 0;
+  const eff = stats?.queueEfficiency ?? 0;
+
+  const now = new Date();
+  const timeStr = now.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true }).toUpperCase();
+
   return (
-    <div className="min-h-screen bg-surface-800 flex flex-col">
-      {/* ─── Top Navigation ─────────────────────────────────────── */}
-      <header className="sticky top-0 z-50 border-b border-white/[0.06] bg-surface-700/80 backdrop-blur-xl">
-        <div className="max-w-[1600px] mx-auto px-4 sm:px-6 h-16 flex items-center justify-between gap-4">
-          {/* Logo */}
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-brand-500 to-brand-600 flex items-center justify-center glow-brand">
-              <Activity className="text-white" size={18} />
+    /*
+     * ROOT: h-screen + overflow-hidden → locks the viewport
+     * Only the middle <main> gets overflow-y-auto → only it scrolls
+     */
+    <div className="flex h-screen overflow-hidden" style={{ background: '#EEF4FA' }}>
+
+      {/* ══════════ LEFT SIDEBAR (fixed height, never scrolls) ══════════ */}
+      <aside
+        className="flex flex-col w-[220px] flex-shrink-0 h-screen"
+        style={{ background: '#0A1931', borderRight: '1px solid rgba(255,255,255,0.06)' }}
+      >
+        {/* Logo */}
+        <div className="px-5 pt-5 pb-4" style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+          <div className="flex items-center gap-2.5">
+            <div
+              className="w-8 h-8 rounded-xl flex items-center justify-center flex-shrink-0"
+              style={{ background: 'linear-gradient(135deg, #4A7FA7 0%, #1A3D63 100%)' }}
+            >
+              {/* Q icon */}
+              <span className="text-white font-black text-sm font-mono leading-none">Q</span>
             </div>
             <div>
-              <h1 className="text-base font-black text-slate-100 tracking-tight">
-                Queue<span className="text-brand-400">Cure</span>
-              </h1>
-              <p className="text-xs text-slate-500 hidden sm:block">Receptionist Dashboard</p>
+              <p className="text-sm font-black text-white leading-tight">
+                Queue<span style={{ color: '#4A7FA7' }}>Cure</span>
+              </p>
             </div>
           </div>
+        </div>
 
-          {/* Actions */}
+        {/* Live queue label + animation */}
+        <div className="px-5 py-3" style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+          <p className="text-[10px] font-semibold uppercase tracking-widest mb-2.5" style={{ color: 'rgba(74,127,167,0.9)' }}>
+            Live Queue · {waiting} Waiting
+          </p>
+          <QueueAnimation />
+        </div>
+
+        {/* Nav */}
+        <nav className="flex-1 px-3 py-3 flex flex-col gap-0.5">
+          <NavItem icon={LayoutDashboard} label="Dashboard" active />
+          <NavItem icon={Monitor} label="Queue Board" href="/board" external />
+          <NavItem icon={BarChart2} label="Analytics" />
+          <NavItem icon={Settings} label="Settings" />
+        </nav>
+
+        {/* Bottom: connection */}
+        <div className="px-4 py-4" style={{ borderTop: '1px solid rgba(255,255,255,0.05)' }}>
+          <ConnectionStatus />
+        </div>
+      </aside>
+
+      {/* ══════════ CENTRE + RIGHT wrapper ══════════ */}
+      <div className="flex flex-1 flex-col min-w-0 overflow-hidden">
+
+        {/* ── Top bar ─────────────────────────────────────────────────── */}
+        <header
+          className="flex items-center justify-between px-6 h-14 flex-shrink-0"
+          style={{
+            background: '#F6FAFD',
+            borderBottom: '1px solid #D4E4F0',
+          }}
+        >
+          <div>
+            <p className="text-[11px] font-semibold uppercase tracking-widest" style={{ color: '#88A9C0' }}>
+              Live Operations
+            </p>
+          </div>
           <div className="flex items-center gap-3">
-            <ConnectionStatus />
+            <span className="text-sm font-medium" style={{ color: '#4A7FA7' }}>{timeStr}</span>
             <Link
               href="/board"
               id="open-board-link"
               target="_blank"
-              className="btn-ghost text-xs gap-1.5"
+              className="btn-ghost text-xs"
+              style={{ paddingTop: '6px', paddingBottom: '6px' }}
             >
-              <Monitor size={14} />
-              Queue Board
+              <Monitor size={13} />
+              Display Board
             </Link>
           </div>
-        </div>
-      </header>
+        </header>
 
-      {/* ─── Main Content ────────────────────────────────────────── */}
-      <main className="flex-1 max-w-[1600px] mx-auto w-full px-4 sm:px-6 py-6 flex flex-col gap-6">
-        {/* Stats Row */}
-        {state && <StatsPanel stats={state.stats} />}
+        {/* ── Body: [main scrollable] + [right panel fixed] ─────────── */}
+        <div className="flex flex-1 overflow-hidden">
 
-        {/* Dashboard Grid */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Left Column: Queue Management */}
-          <div className="lg:col-span-2 flex flex-col gap-6">
-            {/* Current Patient + Call Next */}
+          {/* ── MAIN (scrollable) ───────────────────────────────────── */}
+          <main className="flex-1 overflow-y-auto px-6 py-5 flex flex-col gap-5 min-w-0">
+
+            {/* Stats strip */}
+            <div className="grid grid-cols-4 gap-3">
+              {/* Now Serving */}
+              <div className="card p-4">
+                <p className="text-[10px] font-semibold uppercase tracking-widest mb-3" style={{ color: '#88A9C0' }}>Now Serving</p>
+                <div className="flex items-center gap-2">
+                  <Zap size={20} style={{ color: '#4A7FA7' }} />
+                  <span className="text-2xl font-black font-mono" style={{ color: '#0A1931' }}>
+                    {nowToken ? `#${nowToken}` : '—'}
+                  </span>
+                </div>
+              </div>
+
+              {/* Waiting */}
+              <div className="card p-4">
+                <p className="text-[10px] font-semibold uppercase tracking-widest mb-3" style={{ color: '#88A9C0' }}>Waiting</p>
+                <div className="flex items-center gap-2">
+                  <Users size={20} style={{ color: '#c47c0a' }} />
+                  <span className="text-2xl font-black font-mono" style={{ color: '#0A1931' }}>{waiting}</span>
+                </div>
+              </div>
+
+              {/* Avg Consult */}
+              <div className="card p-4">
+                <p className="text-[10px] font-semibold uppercase tracking-widest mb-3" style={{ color: '#88A9C0' }}>Avg. Consult</p>
+                <div className="flex items-end gap-1">
+                  <span className="text-2xl font-black font-mono" style={{ color: '#0A1931' }}>
+                    {avgMin > 0 ? avgMin.toFixed(1) : '—'}
+                  </span>
+                  {avgMin > 0 && <span className="text-sm font-semibold mb-0.5" style={{ color: '#88A9C0' }}>min</span>}
+                </div>
+              </div>
+
+              {/* Today's Performance */}
+              <div className="card p-4">
+                <p className="text-[10px] font-semibold uppercase tracking-widest mb-2" style={{ color: '#88A9C0' }}>Today's Performance</p>
+                <div className="flex items-end gap-4">
+                  <div>
+                    <div className="flex items-center gap-1">
+                      <TrendingUp size={13} style={{ color: '#0f9b6e' }} />
+                      <span className="text-2xl font-black font-mono" style={{ color: '#0A1931' }}>{served}</span>
+                    </div>
+                    <p className="text-[10px] font-semibold uppercase tracking-wider mt-0.5" style={{ color: '#88A9C0' }}>Served</p>
+                  </div>
+                  <div>
+                    <span className="text-2xl font-black font-mono" style={{ color: '#0A1931' }}>{eff}%</span>
+                    <p className="text-[10px] font-semibold uppercase tracking-wider mt-0.5" style={{ color: '#88A9C0' }}>Efficiency</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Now Serving panel */}
             <CurrentPatient
               currentPatient={state?.currentPatient ?? null}
-              hasWaiting={(state?.waitingPatients.length ?? 0) > 0}
-              elapsed={state?.stats.currentConsultationElapsed ?? 0}
-              predicted={state?.stats.currentConsultationPredicted ?? 0}
+              hasWaiting={waiting > 0}
+              elapsed={stats?.currentConsultationElapsed ?? 0}
+              predicted={stats?.currentConsultationPredicted ?? 0}
             />
 
             {/* Waiting Queue */}
@@ -87,81 +246,60 @@ export default function DashboardPage() {
 
             {/* Analytics */}
             <AnalyticsPanel />
-          </div>
+          </main>
 
-          {/* Right Column: Add Patient */}
-          <div className="flex flex-col gap-6">
-            <AddPatientForm />
-
-            {/* Quick Info Card */}
-            <div className="glass-card p-5">
-              <p className="section-label">Quick Links</p>
-              <div className="flex flex-col gap-2">
-                <Link
-                  href="/board"
-                  target="_blank"
-                  className="flex items-center gap-3 p-3 rounded-xl bg-surface-500/40 hover:bg-surface-500 border border-white/[0.05] hover:border-white/[0.1] transition-all duration-200 text-sm text-slate-300"
-                >
-                  <Monitor className="text-brand-400" size={16} />
-                  Open Queue Display Board
-                </Link>
-                {state?.currentPatient && (
-                  <Link
-                    href={`/track/${state.currentPatient.tokenNumber}`}
-                    target="_blank"
-                    className="flex items-center gap-3 p-3 rounded-xl bg-surface-500/40 hover:bg-surface-500 border border-white/[0.05] hover:border-white/[0.1] transition-all duration-200 text-sm text-slate-300"
-                  >
-                    <RefreshCw className="text-emerald-400" size={16} />
-                    Track Current Patient
-                  </Link>
-                )}
-              </div>
+          {/* ── RIGHT PANEL (fixed, scrollable internally) ─────────── */}
+          <aside
+            className="w-[280px] flex-shrink-0 h-full overflow-y-auto flex flex-col gap-0"
+            style={{ background: '#F6FAFD', borderLeft: '1px solid #D4E4F0' }}
+          >
+            {/* Register Patient */}
+            <div className="p-5 border-b" style={{ borderColor: '#D4E4F0' }}>
+              <AddPatientForm />
             </div>
 
-            {/* Prediction Info */}
-            <div className="glass-card p-5">
-              <p className="section-label">Prediction Engine</p>
-              <div className="flex flex-col gap-2 mb-3">
-                {[
-                  { layer: 'Seed baseline',        status: '✓ active', color: 'text-slate-500' },
-                  { layer: 'Rolling avg blend',     status: '✓ active', color: 'text-slate-500' },
-                  { layer: 'Percentile range',      status: '✓ active', color: 'text-brand-400' },
-                  { layer: 'Visit-type weights',    status: '✓ active', color: 'text-brand-400' },
-                  { layer: 'Elapsed correction',    status: '✓ active', color: 'text-brand-400' },
-                  { layer: 'Psych buffer (1.08×)',  status: '✓ active', color: 'text-emerald-400' },
-                  { layer: 'Audit log → ML data',   status: '✓ logging', color: 'text-emerald-400' },
-                ].map((item) => (
-                  <div key={item.layer} className="flex items-center justify-between text-xs">
-                    <span className="text-slate-400">{item.layer}</span>
-                    <span className={item.color}>{item.status}</span>
-                  </div>
-                ))}
-              </div>
-              <div className="flex flex-col gap-2 border-t border-white/[0.05] pt-3">
-                {[
-                  { type: 'Follow-up',   dur: '8 min',  color: 'bg-cyan-400',     weight: '0.6×' },
-                  { type: 'General',     dur: '15 min', color: 'bg-violet-400',   weight: '1.0×' },
-                  { type: 'New Patient', dur: '25 min', color: 'bg-emerald-400',  weight: '1.3×' },
-                  { type: 'Specialist',  dur: '35 min', color: 'bg-orange-400',   weight: '1.8×' },
-                ].map((item) => (
-                  <div key={item.type} className="flex items-center gap-2 text-xs">
-                    <span className={`w-2 h-2 rounded-full flex-shrink-0 ${item.color}`} />
-                    <span className="flex-1 text-slate-400">{item.type}</span>
-                    <span className="font-mono text-slate-600">{item.dur}</span>
-                    <span className="font-mono text-slate-500">{item.weight}</span>
-                  </div>
-                ))}
-              </div>
-              <p className="text-xs text-slate-600 mt-3 leading-relaxed">
-                Ranges shown as <strong className="text-slate-500">optimistic – likely</strong>.
-                Confidence grows with each completed consultation.
-                Every prediction is logged for future ML training.
+            {/* System Insights */}
+            <div className="p-5 border-b" style={{ borderColor: '#D4E4F0' }}>
+              <p className="text-[10px] font-bold uppercase tracking-widest mb-3" style={{ color: '#88A9C0' }}>
+                System Insights
               </p>
+              <div className="flex flex-col gap-0.5">
+                <SidebarStat label="Predicted Next Wait" value={avgMin > 0 ? `${Math.round(avgMin * 1.1)}min` : '—'} />
+                <SidebarStat label="Queue Efficiency" value={`${eff}%`} />
+                <SidebarStat label="Patients Served Today" value={String(served)} />
+                <SidebarStat label="Currently Waiting" value={String(waiting)} />
+              </div>
             </div>
 
-          </div>
+            {/* Quick Links */}
+            <div className="p-5">
+              <p className="text-[10px] font-bold uppercase tracking-widest mb-3" style={{ color: '#88A9C0' }}>
+                Quick Links
+              </p>
+              <div className="flex flex-col gap-1">
+                {[
+                  { icon: LayoutDashboard, label: 'Dashboard', href: '/dashboard' },
+                  { icon: Monitor, label: 'Queue Board', href: '/board' },
+                  { icon: LinkIcon, label: 'Patient Track', href: state?.currentPatient ? `/track/${state.currentPatient.tokenNumber}` : '#' },
+                ].map(item => (
+                  <Link
+                    key={item.label}
+                    href={item.href}
+                    target="_blank"
+                    className="flex items-center gap-3 px-3 py-2.5 rounded-xl text-[13px] font-medium transition-all duration-150"
+                    style={{ color: '#1A3D63' }}
+                    onMouseEnter={e => (e.currentTarget.style.background = '#EEF4FA')}
+                    onMouseLeave={e => (e.currentTarget.style.background = '')}
+                  >
+                    <item.icon size={14} style={{ color: '#4A7FA7' }} />
+                    {item.label}
+                  </Link>
+                ))}
+              </div>
+            </div>
+          </aside>
         </div>
-      </main>
+      </div>
     </div>
   );
 }

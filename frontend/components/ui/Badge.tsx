@@ -8,30 +8,25 @@ interface StatusBadgeProps {
   className?: string;
 }
 
+const STATUS_STYLES: Record<PatientStatus, { bg: string; color: string; dot: string }> = {
+  waiting:         { bg: '#fef6e4', color: '#c47c0a', dot: '#f59e0b' },
+  in_consultation: { bg: '#e8f0f8', color: '#1A3D63', dot: '#4A7FA7' },
+  completed:       { bg: '#e6f7f2', color: '#0f9b6e', dot: '#0f9b6e' },
+  cancelled:       { bg: '#f3f4f6', color: '#6b7280', dot: '#9ca3af' },
+};
+
 export function StatusBadge({ status, className }: StatusBadgeProps) {
-  const styles: Record<PatientStatus, string> = {
-    waiting: 'bg-amber-400/10 text-amber-400 border-amber-400/20',
-    in_consultation: 'bg-brand-400/10 text-brand-400 border-brand-400/20 blink',
-    completed: 'bg-emerald-400/10 text-emerald-400 border-emerald-400/20',
-    cancelled: 'bg-slate-400/10 text-slate-400 border-slate-400/20',
-  };
-
-  const dots: Record<PatientStatus, string> = {
-    waiting: 'bg-amber-400',
-    in_consultation: 'bg-brand-400',
-    completed: 'bg-emerald-400',
-    cancelled: 'bg-slate-400',
-  };
-
+  const s = STATUS_STYLES[status];
   return (
     <span
       className={clsx(
-        'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border',
-        styles[status],
+        'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold',
+        status === 'in_consultation' && 'blink',
         className,
       )}
+      style={{ background: s.bg, color: s.color }}
     >
-      <span className={clsx('w-1.5 h-1.5 rounded-full', dots[status])} />
+      <span className="w-1.5 h-1.5 rounded-full" style={{ background: s.dot }} />
       {STATUS_LABELS[status]}
     </span>
   );
@@ -42,21 +37,19 @@ interface AppointmentBadgeProps {
   className?: string;
 }
 
-export function AppointmentBadge({ type, className }: AppointmentBadgeProps) {
-  const styles: Record<AppointmentType, string> = {
-    follow_up: 'bg-cyan-400/10 text-cyan-400 border-cyan-400/20',
-    general: 'bg-violet-400/10 text-violet-400 border-violet-400/20',
-    new_patient: 'bg-emerald-400/10 text-emerald-400 border-emerald-400/20',
-    specialist: 'bg-orange-400/10 text-orange-400 border-orange-400/20',
-  };
+const APPT_STYLES: Record<AppointmentType, { bg: string; color: string }> = {
+  follow_up:   { bg: '#e8f0f8', color: '#1A3D63' },
+  general:     { bg: '#EEF4FA', color: '#4A7FA7' },
+  new_patient: { bg: '#e6f7f2', color: '#0f9b6e' },
+  specialist:  { bg: '#fef6e4', color: '#c47c0a' },
+};
 
+export function AppointmentBadge({ type, className }: AppointmentBadgeProps) {
+  const s = APPT_STYLES[type];
   return (
     <span
-      className={clsx(
-        'inline-flex items-center px-2.5 py-1 rounded-lg text-xs font-medium border',
-        styles[type],
-        className,
-      )}
+      className={clsx('inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium', className)}
+      style={{ background: s.bg, color: s.color }}
     >
       {APPOINTMENT_TYPE_LABELS[type]}
     </span>

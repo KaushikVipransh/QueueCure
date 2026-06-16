@@ -53,12 +53,27 @@ export class SmsService {
         to: opts.to,
       });
 
-      console.log(`[SMS] Sent to ${opts.to} — SID: ${msg.sid}`);
+      // Twilio can return HTTP 201 but with status 'failed' or 'undelivered'
+      // (e.g. trial account sending to an unverified number returns status='failed')
+      // These are NOT exceptions — we must check the status field explicitly.
+      const BAD_STATUSES = ['failed', 'undelivered', 'canceled'];
+      if (BAD_STATUSES.includes(msg.status)) {
+        console.error(
+          `[SMS] Twilio accepted but failed delivery to ${opts.to} — ` +
+          `SID: ${msg.sid}, status: ${msg.status}, errorCode: ${msg.errorCode ?? 'none'}`,
+        );
+        return false;
+      }
+
+      console.log(`[SMS] Queued to ${opts.to} — SID: ${msg.sid}, status: ${msg.status}`);
       return true;
     } catch (err: any) {
-      // Non-critical: log the error but never throw — SMS failure should
-      // not block patient registration
-      console.error(`[SMS] Failed to send to ${opts.to}:`, err.message ?? err);
+      // Twilio throws RestException for hard rejections (e.g. error 21608:
+      // unverified number on trial account, 21211: invalid number, etc.)
+      console.error(
+        `[SMS] Exception sending to ${opts.to}: ` +
+        `code=${err.code ?? 'n/a'} — ${err.message ?? err}`,
+      );
       return false;
     }
   }

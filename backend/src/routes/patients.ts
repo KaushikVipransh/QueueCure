@@ -38,7 +38,7 @@ patientsRouter.post('/', async (req: Request, res: Response, next: NextFunction)
       }
     }
 
-    const patient = await queueService.addPatient(
+    const { patient, smsSent } = await queueService.addPatient(
       patientName,
       appointmentType,
       phoneNumber?.trim() || undefined,
@@ -52,7 +52,7 @@ patientsRouter.post('/', async (req: Request, res: Response, next: NextFunction)
     res.status(201).json({
       success: true,
       patient,
-      smsSent: !!(patient.phoneNumber && patient.smsSent),
+      smsSent,
     });
   } catch (err) {
     next(err);

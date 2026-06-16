@@ -1,17 +1,17 @@
 'use client';
 
 import { useState } from 'react';
-import { UserPlus, ChevronDown, Phone, MessageCircle, CheckCircle2 } from 'lucide-react';
+import { UserPlus, ChevronDown, Phone, CheckCircle2, MessageCircle } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { addPatient } from '@/lib/api';
 import { AppointmentType } from '@/lib/types';
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
 
-const APPOINTMENT_TYPES: { value: AppointmentType; label: string; duration: string; color: string }[] = [
-  { value: 'follow_up',   label: 'Follow-up Consultation',   duration: '~8 min',  color: 'text-cyan-400'    },
-  { value: 'general',     label: 'General Consultation',     duration: '~15 min', color: 'text-violet-400'  },
-  { value: 'new_patient', label: 'New Patient Consultation', duration: '~25 min', color: 'text-emerald-400' },
-  { value: 'specialist',  label: 'Specialist Consultation',  duration: '~35 min', color: 'text-orange-400'  },
+const APPOINTMENT_TYPES: { value: AppointmentType; label: string; duration: string }[] = [
+  { value: 'follow_up',   label: 'Follow-up',    duration: '~8 min'  },
+  { value: 'general',     label: 'General',       duration: '~15 min' },
+  { value: 'new_patient', label: 'New Patient',   duration: '~25 min' },
+  { value: 'specialist',  label: 'Specialist',    duration: '~35 min' },
 ];
 
 interface AddPatientFormProps {
@@ -19,20 +19,16 @@ interface AddPatientFormProps {
 }
 
 export function AddPatientForm({ onPatientAdded }: AddPatientFormProps) {
-  const [name,        setName]        = useState('');
-  const [phone,       setPhone]       = useState('');
-  const [type,        setType]        = useState<AppointmentType>('general');
-  const [loading,     setLoading]     = useState(false);
-  const [phoneError,  setPhoneError]  = useState('');
-
-  const selectedType = APPOINTMENT_TYPES.find((t) => t.value === type)!;
+  const [name,       setName]       = useState('');
+  const [phone,      setPhone]      = useState('');
+  const [type,       setType]       = useState<AppointmentType>('general');
+  const [loading,    setLoading]    = useState(false);
+  const [phoneError, setPhoneError] = useState('');
 
   const validatePhone = (val: string) => {
-    if (!val.trim()) return ''; // phone is optional
+    if (!val.trim()) return '';
     const cleaned = val.trim().replace(/\s/g, '');
-    if (!/^\+?[1-9]\d{6,14}$/.test(cleaned)) {
-      return 'Use E.164 format: +919876543210';
-    }
+    if (!/^\+?[1-9]\d{6,14}$/.test(cleaned)) return 'Use +919876543210 format';
     return '';
   };
 
@@ -44,182 +40,116 @@ export function AddPatientForm({ onPatientAdded }: AddPatientFormProps) {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-
-    if (!name.trim()) {
-      toast.error('Patient name is required.');
-      return;
-    }
-
+    if (!name.trim()) { toast.error('Patient name is required.'); return; }
     const phoneErr = validatePhone(phone);
-    if (phoneErr) {
-      setPhoneError(phoneErr);
-      return;
-    }
+    if (phoneErr) { setPhoneError(phoneErr); return; }
 
     setLoading(true);
     try {
-      const result = await addPatient(
-        name.trim(),
-        type,
-        phone.trim() || undefined,
-      );
-
+      const result = await addPatient(name.trim(), type, phone.trim() || undefined);
       const { patient, smsSent } = result;
-
-      // Primary toast — token issued
-      toast.success(
-        `✅ Token #${patient.tokenNumber} issued to ${patient.patientName}`,
-        { duration: 4000 },
-      );
-
-      // Secondary toast — SMS status
+      toast.success(`Token #${patient.tokenNumber} issued to ${patient.patientName}`, { duration: 4000 });
       if (phone.trim()) {
-        if (smsSent) {
-          toast(
-            (t) => (
-              <div className="flex items-center gap-2 text-sm">
-                <MessageCircle size={16} className="text-emerald-400 flex-shrink-0" />
-                <span>Tracking link sent to <strong>{phone.trim()}</strong></span>
-              </div>
-            ),
-            { duration: 5000, icon: '📱' },
-          );
-        } else {
-          toast(
-            'SMS not sent — Twilio not configured. Share the tracking link manually.',
-            { icon: '⚠️', duration: 4000 },
-          );
-        }
+        toast(
+          () => (
+            <div className="flex items-center gap-2 text-sm">
+              <MessageCircle size={15} style={{ color: smsSent ? '#0f9b6e' : '#c47c0a', flexShrink: 0 }} />
+              <span>{smsSent ? `Tracking SMS sent to ${phone.trim()}` : 'SMS not sent — share link manually'}</span>
+            </div>
+          ),
+          { duration: 5000, icon: smsSent ? '📱' : '⚠️' },
+        );
       }
-
-      setName('');
-      setPhone('');
-      setType('general');
-      setPhoneError('');
+      setName(''); setPhone(''); setType('general'); setPhoneError('');
       onPatientAdded?.();
     } catch (err: any) {
-      toast.error(err.message ?? 'Failed to add patient. Please try again.');
+      toast.error(err.message ?? 'Failed to add patient.');
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <form onSubmit={handleSubmit} className="glass-card p-6 flex flex-col gap-5">
+    <form onSubmit={handleSubmit} className="flex flex-col gap-4">
       {/* Header */}
-      <div className="flex items-center gap-3">
-        <div className="w-9 h-9 rounded-xl bg-brand-500/15 flex items-center justify-center">
-          <UserPlus className="text-brand-400" size={18} />
-        </div>
-        <div>
-          <h2 className="text-base font-semibold text-slate-100">Add Patient</h2>
-          <p className="text-xs text-slate-500">Issue a new queue token</p>
-        </div>
+      <p className="text-[10px] font-bold uppercase tracking-widest" style={{ color: '#88A9C0' }}>
+        Register Patient
+      </p>
+
+      {/* First name */}
+      <div>
+        <label htmlFor="patient-name" className="block text-xs font-semibold mb-1.5" style={{ color: '#1A3D63' }}>
+          Patient Name
+        </label>
+        <input
+          id="patient-name"
+          type="text"
+          value={name}
+          onChange={e => setName(e.target.value)}
+          placeholder="First name"
+          className="input-field"
+          maxLength={100}
+          autoComplete="off"
+        />
       </div>
 
-      <div className="flex flex-col gap-3">
-        {/* Patient Name */}
-        <div>
-          <label htmlFor="patient-name" className="block text-xs font-medium text-slate-400 mb-1.5">
-            Patient Name <span className="text-slate-600">(required)</span>
-          </label>
+      {/* Phone */}
+      <div>
+        <label htmlFor="patient-phone" className="block text-xs font-semibold mb-1.5" style={{ color: '#1A3D63' }}>
+          Mobile <span className="font-normal" style={{ color: '#88A9C0' }}>(optional)</span>
+        </label>
+        <div className="relative">
           <input
-            id="patient-name"
-            type="text"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="Enter patient full name"
-            className="input-field"
-            maxLength={100}
-            autoComplete="off"
+            id="patient-phone"
+            type="tel"
+            value={phone}
+            onChange={e => handlePhoneChange(e.target.value)}
+            placeholder="+91 98765 43210"
+            className="input-field pl-8"
+            style={phoneError ? { borderColor: '#c93636' } : {}}
+            maxLength={16}
           />
+          <Phone size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" style={{ color: '#88A9C0' }} />
         </div>
+        {phoneError && <p className="text-xs mt-1" style={{ color: '#c93636' }}>{phoneError}</p>}
+        {phone.trim() && !phoneError && (
+          <p className="text-xs mt-1 flex items-center gap-1" style={{ color: '#0f9b6e' }}>
+            <CheckCircle2 size={10} /> Tracking link via SMS
+          </p>
+        )}
+      </div>
 
-        {/* Phone Number */}
-        <div>
-          <label htmlFor="patient-phone" className="block text-xs font-medium text-slate-400 mb-1.5">
-            <span className="flex items-center gap-1.5">
-              <Phone size={11} />
-              Mobile Number
-              <span className="text-slate-600 font-normal">(optional — sends tracking link via SMS)</span>
-            </span>
-          </label>
-          <div className="relative">
-            <input
-              id="patient-phone"
-              type="tel"
-              value={phone}
-              onChange={(e) => handlePhoneChange(e.target.value)}
-              placeholder="+91 98765 43210"
-              className={`input-field pl-9 ${phoneError ? 'border-red-500/50 focus:border-red-500' : ''}`}
-              maxLength={16}
-              autoComplete="tel"
-            />
-            <Phone
-              size={13}
-              className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none"
-            />
-          </div>
-          {phoneError && (
-            <p className="text-xs text-red-400 mt-1">{phoneError}</p>
-          )}
-          {phone.trim() && !phoneError && (
-            <p className="text-xs text-emerald-400 mt-1 flex items-center gap-1">
-              <CheckCircle2 size={10} />
-              Patient will receive a tracking link via SMS
-            </p>
-          )}
-        </div>
-
-        {/* Appointment Type */}
-        <div>
-          <label htmlFor="appointment-type" className="block text-xs font-medium text-slate-400 mb-1.5">
-            Appointment Type
-          </label>
-          <div className="relative">
-            <select
-              id="appointment-type"
-              value={type}
-              onChange={(e) => setType(e.target.value as AppointmentType)}
-              className="select-field pr-10"
-            >
-              {APPOINTMENT_TYPES.map((t) => (
-                <option key={t.value} value={t.value}>
-                  {t.label}
-                </option>
-              ))}
-            </select>
-            <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500 pointer-events-none" />
-          </div>
-        </div>
-
-        {/* Type info pill */}
-        <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-surface-500 border border-white/[0.05]">
-          <span className={`w-2 h-2 rounded-full ${selectedType.color.replace('text-', 'bg-')}`} />
-          <span className="text-xs text-slate-400">{selectedType.label}</span>
-          <span className={`ml-auto text-xs font-medium font-mono ${selectedType.color}`}>
-            {selectedType.duration}
-          </span>
+      {/* Appointment type */}
+      <div>
+        <label htmlFor="appointment-type" className="block text-xs font-semibold mb-1.5" style={{ color: '#1A3D63' }}>
+          Appointment Type
+        </label>
+        <div className="relative">
+          <select
+            id="appointment-type"
+            value={type}
+            onChange={e => setType(e.target.value as AppointmentType)}
+            className="select-field pr-8"
+          >
+            {APPOINTMENT_TYPES.map(t => (
+              <option key={t.value} value={t.value}>{t.label} ({t.duration})</option>
+            ))}
+          </select>
+          <ChevronDown size={13} className="absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" style={{ color: '#88A9C0' }} />
         </div>
       </div>
 
+      {/* Submit */}
       <button
         id="add-patient-btn"
         type="submit"
         disabled={loading || !!phoneError}
-        className="btn-primary w-full"
+        className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl font-bold text-sm text-white transition-all duration-150 disabled:opacity-40"
+        style={{ background: 'linear-gradient(135deg, #4A7FA7 0%, #1A3D63 100%)' }}
       >
-        {loading ? (
-          <>
-            <LoadingSpinner size="sm" />
-            Adding...
-          </>
-        ) : (
-          <>
-            <UserPlus size={16} />
-            Issue Token{phone.trim() && !phoneError ? ' & Send SMS' : ''}
-          </>
-        )}
+        {loading
+          ? <><LoadingSpinner size="sm" /> Registering...</>
+          : <><UserPlus size={14} /> Issue Token +</>}
       </button>
     </form>
   );

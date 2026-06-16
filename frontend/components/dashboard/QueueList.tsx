@@ -3,34 +3,14 @@
 import { useState } from 'react';
 import { Trash2, Clock, Users, ExternalLink } from 'lucide-react';
 import toast from 'react-hot-toast';
-import clsx from 'clsx';
 import { removePatient } from '@/lib/api';
-import { PatientWithPrediction, APPOINTMENT_TYPE_LABELS, formatWaitTime } from '@/lib/types';
+import { PatientWithPrediction, formatWaitTime } from '@/lib/types';
 import { AppointmentBadge } from '@/components/ui/Badge';
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
 
-// ─── Confidence dot indicator ─────────────────────────────────────────────────
+interface QueueListProps { patients: PatientWithPrediction[]; }
 
-const CONFIDENCE_CONFIG = {
-  high:   { filled: 3, color: 'text-emerald-400', title: 'High confidence' },
-  medium: { filled: 2, color: 'text-amber-400',   title: 'Medium confidence' },
-  low:    { filled: 1, color: 'text-slate-500',   title: 'Seed estimate' },
-};
-
-function ConfidenceDots({ confidence }: { confidence: 'low' | 'medium' | 'high' }) {
-  const cfg = CONFIDENCE_CONFIG[confidence];
-  return (
-    <span className={clsx('text-[10px]', cfg.color)} title={cfg.title}>
-      {Array.from({ length: 3 }).map((_, i) => (
-        <span key={i} className={i < cfg.filled ? cfg.color : 'text-slate-700'}>●</span>
-      ))}
-    </span>
-  );
-}
-
-interface QueueListProps {
-  patients: PatientWithPrediction[];
-}
+const CONFIDENCE_COLORS = { high: '#0f9b6e', medium: '#c47c0a', low: '#B3CFE5' };
 
 export function QueueList({ patients }: QueueListProps) {
   const [removing, setRemoving] = useState<string | null>(null);
@@ -49,123 +29,128 @@ export function QueueList({ patients }: QueueListProps) {
   };
 
   return (
-    <div className="glass-card p-6 flex flex-col gap-4 min-h-[300px]">
+    <div className="card flex flex-col">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-xl bg-amber-500/15 flex items-center justify-center">
-            <Users className="text-amber-400" size={18} />
-          </div>
-          <div>
-            <h2 className="text-base font-semibold text-slate-100">Waiting Queue</h2>
-            <p className="text-xs text-slate-500">
-              {patients.length > 0
-                ? `${patients.length} patient${patients.length !== 1 ? 's' : ''} waiting`
-                : 'Queue is empty'}
-            </p>
-          </div>
-        </div>
+      <div className="flex items-center justify-between px-5 py-4" style={{ borderBottom: '1px solid #EEF4FA' }}>
+        <p className="text-[10px] font-bold uppercase tracking-widest" style={{ color: '#88A9C0' }}>
+          Waiting Queue
+        </p>
         {patients.length > 0 && (
-          <span className="token-badge">{patients.length}</span>
+          <span
+            className="text-xs font-bold font-mono px-2 py-0.5 rounded-full"
+            style={{ background: '#EEF4FA', color: '#1A3D63' }}
+          >
+            {patients.length}
+          </span>
         )}
       </div>
 
-      {/* Patient List */}
+      {/* Table header */}
+      {patients.length > 0 && (
+        <div
+          className="grid px-5 py-2.5 text-[10px] font-bold uppercase tracking-widest"
+          style={{ color: '#88A9C0', gridTemplateColumns: '90px 1fr 140px 100px 60px 40px' }}
+        >
+          <span>Token</span>
+          <span>Patient</span>
+          <span>Type</span>
+          <span>Wait</span>
+          <span>Track</span>
+          <span></span>
+        </div>
+      )}
+
+      {/* Rows */}
       {patients.length === 0 ? (
-        <div className="flex-1 flex flex-col items-center justify-center py-10 text-center">
-          <div className="w-14 h-14 mb-4 rounded-2xl bg-surface-500 flex items-center justify-center">
-            <Users className="text-slate-600" size={26} />
+        <div className="flex flex-col items-center justify-center py-14 text-center">
+          <div
+            className="w-11 h-11 rounded-2xl flex items-center justify-center mb-3"
+            style={{ background: '#EEF4FA' }}
+          >
+            <Users size={20} style={{ color: '#B3CFE5' }} />
           </div>
-          <p className="text-slate-400 font-medium text-sm">Queue is empty</p>
-          <p className="text-slate-600 text-xs mt-1">Add a patient to get started</p>
+          <p className="text-sm font-semibold" style={{ color: '#1A3D63' }}>Queue is empty</p>
+          <p className="text-xs mt-1" style={{ color: '#88A9C0' }}>Add a patient to get started</p>
         </div>
       ) : (
-        <div className="flex flex-col gap-2">
-          {patients.map((patient, index) => (
-            <div
-              key={patient.id}
-              className={clsx(
-                'group flex items-center gap-3 p-3.5 rounded-xl border transition-all duration-200 animate-slide-up',
-                index === 0
-                  ? 'bg-brand-500/5 border-brand-500/20 hover:border-brand-500/35'
-                  : 'bg-surface-500/40 border-white/[0.04] hover:border-white/[0.1]',
-              )}
-              style={{ animationDelay: `${index * 40}ms` }}
-            >
-              {/* Position */}
+        <div>
+          {patients.map((patient, index) => {
+            const isFirst    = index === 0;
+            const confidence = patient.estimationResult?.confidence;
+            const dotColor   = confidence ? CONFIDENCE_COLORS[confidence] : '#B3CFE5';
+
+            return (
               <div
-                className={clsx(
-                  'w-7 h-7 rounded-lg flex items-center justify-center text-xs font-bold flex-shrink-0',
-                  index === 0
-                    ? 'bg-brand-500/20 text-brand-400'
-                    : 'bg-surface-400 text-slate-500',
-                )}
+                key={patient.id}
+                className="group grid items-center px-5 py-3 transition-all duration-150 animate-slide-up"
+                style={{
+                  gridTemplateColumns: '90px 1fr 140px 100px 60px 40px',
+                  background: isFirst ? '#F0F7FC' : 'transparent',
+                  borderBottom: '1px solid #EEF4FA',
+                  animationDelay: `${index * 30}ms`,
+                }}
+                onMouseEnter={e => !isFirst && (e.currentTarget.style.background = '#F8FBFD')}
+                onMouseLeave={e => !isFirst && (e.currentTarget.style.background = 'transparent')}
               >
-                {index + 1}
-              </div>
-
-              {/* Token */}
-              <div
-                className={clsx(
-                  'w-11 h-10 rounded-xl flex items-center justify-center font-black text-base font-mono flex-shrink-0',
-                  index === 0
-                    ? 'bg-gradient-to-br from-brand-500 to-brand-600 text-white'
-                    : 'bg-surface-400 text-slate-300',
-                )}
-              >
-                {patient.tokenNumber}
-              </div>
-
-              {/* Info */}
-              <div className="flex-1 min-w-0">
-                <p className="font-medium text-sm text-slate-100 truncate">{patient.patientName}</p>
-                <AppointmentBadge type={patient.appointmentType as any} className="mt-1" />
-              </div>
-
-              {/* Wait time + confidence */}
-              <div className="flex flex-col items-end gap-1 flex-shrink-0">
-                <div className="flex items-center gap-1 text-xs text-slate-400">
-                  <Clock size={11} />
-                  {patient.estimationResult ? (
-                    <span className="font-mono">
-                      {patient.estimationResult.optimistic}–{patient.estimationResult.likely}
-                      <span className="text-slate-600"> min</span>
-                    </span>
-                  ) : (
-                    <span className="font-mono">{formatWaitTime(patient.estimatedWaitMinutes)}</span>
-                  )}
+                {/* Token */}
+                <div className="flex items-center gap-2">
+                  <span
+                    className="text-xs font-black font-mono px-2 py-1 rounded-lg"
+                    style={{
+                      background: isFirst ? 'linear-gradient(135deg, #4A7FA7, #1A3D63)' : '#EEF4FA',
+                      color: isFirst ? '#fff' : '#1A3D63',
+                    }}
+                  >
+                    #{patient.tokenNumber}
+                  </span>
                 </div>
-                {patient.estimationResult && (
-                  <ConfidenceDots confidence={patient.estimationResult.confidence} />
-                )}
+
+                {/* Name */}
+                <p className="text-sm font-medium truncate" style={{ color: '#0A1931' }}>
+                  {patient.patientName}
+                </p>
+
+                {/* Type */}
+                <AppointmentBadge type={patient.appointmentType as any} />
+
+                {/* Wait */}
+                <div className="flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: dotColor }} />
+                  <span className="text-xs font-mono" style={{ color: '#4A7FA7' }}>
+                    {patient.estimationResult
+                      ? `${patient.estimationResult.optimistic}–${patient.estimationResult.likely} min`
+                      : formatWaitTime(patient.estimatedWaitMinutes)}
+                  </span>
+                </div>
+
+                {/* Track */}
                 <a
                   href={`/track/${patient.tokenNumber}`}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="flex items-center gap-1 text-xs text-brand-400/70 hover:text-brand-400 transition-colors"
-                  title="Open tracking link"
+                  className="flex items-center gap-1 text-xs font-medium transition-colors"
+                  style={{ color: '#4A7FA7' }}
                 >
-                  <ExternalLink size={10} />
-                  Track
+                  <ExternalLink size={11} />
+                  Link
                 </a>
-              </div>
 
-              {/* Remove */}
-              <button
-                id={`remove-patient-${patient.id}`}
-                onClick={() => handleRemove(patient)}
-                disabled={removing === patient.id}
-                className="btn-danger p-2 opacity-0 group-hover:opacity-100 transition-opacity"
-                title={`Remove ${patient.patientName}`}
-              >
-                {removing === patient.id ? (
-                  <LoadingSpinner size="sm" />
-                ) : (
-                  <Trash2 size={14} />
-                )}
-              </button>
-            </div>
-          ))}
+                {/* Remove */}
+                <button
+                  id={`remove-patient-${patient.id}`}
+                  onClick={() => handleRemove(patient)}
+                  disabled={removing === patient.id}
+                  className="flex items-center justify-center w-7 h-7 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity disabled:opacity-40"
+                  style={{ background: '#fdeaea', color: '#c93636' }}
+                  title={`Remove ${patient.patientName}`}
+                >
+                  {removing === patient.id
+                    ? <LoadingSpinner size="sm" />
+                    : <Trash2 size={12} />}
+                </button>
+              </div>
+            );
+          })}
         </div>
       )}
     </div>

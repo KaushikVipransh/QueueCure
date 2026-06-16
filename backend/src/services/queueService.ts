@@ -36,7 +36,7 @@ export class QueueService {
     patientName: string,
     appointmentType: AppointmentType,
     phoneNumber?: string,
-  ) {
+  ): Promise<{ patient: Awaited<ReturnType<typeof prisma.patient.create>>; smsSent: boolean }> {
     const predictedDuration = await predictionService.getPredictedDuration(appointmentType);
 
     // Estimate wait at registration time so we can compute prediction error later
@@ -89,28 +89,29 @@ export class QueueService {
         });
       });
 
-      // Fire SMS after transaction commits (non-blocking — never throws)
+      // Send SMS and await the result so callers get accurate smsSent status
+      let smsSent = false;
       if (patient.phoneNumber) {
         const settings = await prisma.queueSettings.findFirst();
         const clinicName = settings?.clinicName ?? 'Queue Cure Clinic';
 
-        smsService.sendTrackingLink({
+        smsSent = await smsService.sendTrackingLink({
           to: patient.phoneNumber,
           patientName: patient.patientName,
           tokenNumber: patient.tokenNumber,
           clinicName,
-        }).then(async (sent) => {
-          if (sent) {
-            // Mark smsSent so we have an audit trail
-            await prisma.patient.update({
-              where: { id: patient.id },
-              data: { smsSent: true },
-            }).catch(() => { }); // best-effort
-          }
-        }).catch(() => { }); // never let SMS errors surface
+        });
+
+        if (smsSent) {
+          // Best-effort audit trail update — never throw on failure
+          prisma.patient.update({
+            where: { id: patient.id },
+            data: { smsSent: true },
+          }).catch(() => { });
+        }
       }
 
-      return patient;
+      return { patient, smsSent };
     } catch (err: any) {
       if (err.code === 'P2002') {
         throw createError('Token conflict — please try again.', 409);
