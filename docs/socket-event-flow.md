@@ -14,7 +14,8 @@ All queue state mutations happen through the REST API. The backend then emits So
 Receptionist        Backend             All Clients
     │                  │                    │
     │─POST /patients──►│                    │
-    │                  │─(DB: create)──────►│
+    │                  │─(DB: create)───────┤
+    │                  │─(SMS async start)──│
     │                  │─emit: patient-added─►│
     │                  │─emit: queue-updated──►│
     │◄─201 Created─────│                    │

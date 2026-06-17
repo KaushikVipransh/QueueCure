@@ -255,7 +255,21 @@ Only one transition happens. The second receptionist sees a clear error message.
 
 ---
 
-## 5. Edge Cases Handled
+## 5. SMS Tracking & Asynchronous Actions
+
+### Graceful Degradation (Twilio)
+
+The system supports sending a live tracking link via SMS when a patient is registered. This uses the `SmsService` which wraps the Twilio API.
+Crucially, if the `TWILIO_*` environment variables are missing, the service gracefully no-ops. The clinic can run perfectly without SMS capabilities.
+
+### Asynchronous Delivery
+
+The SMS is dispatched *after* the Prisma transaction commits for `addPatient()`. The HTTP request does not wait for Twilio's API response.
+If the delivery is successful, an asynchronous callback updates the `sms_sent` audit flag in the database. This ensures the receptionist dashboard never hangs waiting on third-party network requests.
+
+---
+
+## 6. Edge Cases Handled
 
 | Edge Case | Handling |
 |---|---|
@@ -273,7 +287,7 @@ Only one transition happens. The second receptionist sees a clear error message.
 
 ---
 
-## 6. Scalability Considerations
+## 7. Scalability Considerations
 
 ### Current Architecture Limits
 

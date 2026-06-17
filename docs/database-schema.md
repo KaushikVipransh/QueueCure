@@ -9,13 +9,13 @@
 │ id           UUID  PK        │◄─────│ id                    UUID  PK                  │
 │ token_number INT   UNIQUE    │ 1:1  │ patient_id            UUID  FK,UNIQUE            │
 │ patient_name VARCHAR         │      │ appointment_type      ENUM                       │
-│ appointment_type ENUM        │      │ start_time            TIMESTAMPTZ?               │
-│ status       ENUM            │      │ end_time              TIMESTAMPTZ?               │
-│ created_at   TIMESTAMPTZ     │      │ actual_duration       FLOAT?                     │
-│ updated_at   TIMESTAMPTZ     │      │ predicted_duration    FLOAT                      │
-└──────────────────────────────┘      │ created_at            TIMESTAMPTZ                │
-                                      │                                                  │
-                                      │ ── ConsultationRecord fields (ML pipeline) ───── │
+│ phone_number VARCHAR?        │      │ start_time            TIMESTAMPTZ?               │
+│ appointment_type ENUM        │      │ end_time              TIMESTAMPTZ?               │
+│ status       ENUM            │      │ actual_duration       FLOAT?                     │
+│ sms_sent     BOOLEAN         │      │ predicted_duration    FLOAT                      │
+│ created_at   TIMESTAMPTZ     │      │ created_at            TIMESTAMPTZ                │
+│ updated_at   TIMESTAMPTZ     │      │                                                  │
+└──────────────────────────────┘      │ ── ConsultationRecord fields (ML pipeline) ───── │
                                       │ session_id            VARCHAR?                   │
                                       │ registered_at         TIMESTAMPTZ?               │
                                       │ called_at             TIMESTAMPTZ?               │
@@ -97,8 +97,10 @@ Primary table. One row per patient visit. Token numbers auto-increment from 101.
 | `id` | UUID | Primary key |
 | `token_number` | INT | Unique, auto-assigned starting at 101 |
 | `patient_name` | VARCHAR | Patient's full name |
+| `phone_number` | VARCHAR? | Optional, for Twilio SMS tracking link |
 | `appointment_type` | ENUM | One of 4 appointment types |
 | `status` | ENUM | State machine: waiting → in_consultation → completed |
+| `sms_sent` | BOOLEAN | Audit flag: was SMS delivered successfully? |
 | `created_at` | TIMESTAMPTZ | Queue entry time |
 | `updated_at` | TIMESTAMPTZ | Last status change time |
 

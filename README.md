@@ -33,6 +33,7 @@ QueueCure solves both. The receptionist dashboard manages the queue in real time
 | **Live Countdown** | Per-patient real-time countdown synced to queue state via WebSocket |
 | **Queue Board** | Full-screen TV display with animated token changes and chime |
 | **Patient Tracking** | Shareable `/track/:token` link — patients track their own position from their phone |
+| **SMS Notifications** | Automatic Twilio SMS delivery with tracking link upon registration (graceful fallback if Twilio is unconfigured) |
 | **ML Audit Log** | Every prediction logged with full feature context. `actualWait` backfilled on completion — silent training data accumulation |
 | **Analytics Dashboard** | Hourly charts, type distribution, prediction accuracy, duration trends |
 | **Concurrency Safe** | Prisma transactions prevent race conditions on simultaneous "Call Next" clicks |
@@ -137,6 +138,7 @@ Receptionist                 Backend                          Clients
      │                          │  ├─ getPredictedDuration()     │
      │                          │  ├─ write registeredAt         │
      │                          │  └─ write predictedWaitAtReg   │
+     │                          │── (async) send Twilio SMS      │
      │                          │── emit: patient-added ────────►│
      │                          │── emit: queue-updated ─────────►│
      │◄── 201 Created ──────────│                                │
@@ -205,6 +207,11 @@ FRONTEND_URL=http://localhost:3000
 # Supabase connection strings
 DATABASE_URL="postgresql://postgres.[project-ref]:[password]@aws-1-ap-northeast-2.pooler.supabase.com:6543/postgres?pgbouncer=true"
 DIRECT_URL="postgresql://postgres.[project-ref]:[password]@aws-1-ap-northeast-2.pooler.supabase.com:5432/postgres"
+
+# Twilio SMS setup (Optional)
+TWILIO_ACCOUNT_SID=your_account_sid
+TWILIO_AUTH_TOKEN=your_auth_token
+TWILIO_PHONE_NUMBER=+1234567890
 ```
 
 **Frontend** — `frontend/.env.local` is pre-configured for local dev:
